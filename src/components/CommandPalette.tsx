@@ -1,0 +1,361 @@
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useWorkbenchStore } from "../store/workbenchStore";
+import { useSettingsStore } from "../store/settingsStore";
+import { shellMeta, collectLeaves } from "../lib/layout";
+import { allExtensionCommands, ensureExampleExtension } from "../lib/extensions";
+import { loadCustomTemplates } from "../lib/customTemplates";
+import { useShellCatalogStore } from "../store/shellCatalogStore";
+
+type Item = {
+  id: string;
+  label: string;
+  hint?: string;
+  run: () => void;
+};
+
+/** Product enhancement: Ctrl+Shift+P command palette for power users. */
+export function CommandPalette({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const nav = useNavigate();
+  const [q, setQ] = useState("");
+  const [idx, setIdx] = useState(0);
+  const createTabFromProfile = useWorkbenchStore((s) => s.createTabFromProfile);
+  const addPane = useWorkbenchStore((s) => s.addPane);
+  const shellProfiles = useShellCatalogStore((s) => s.profiles);
+  const setAiOpen = useWorkbenchStore((s) => s.setAiOpen);
+  const aiOpen = useWorkbenchStore((s) => s.aiOpen);
+  const clearPane = useWorkbenchStore((s) => s.clearPane);
+  const newAgentSession = useWorkbenchStore((s) => s.newAgentSession);
+  const setActivePane = useWorkbenchStore((s) => s.setActivePane);
+  const setActiveTab = useWorkbenchStore((s) => s.setActiveTab);
+  const tabs = useWorkbenchStore((s) => s.tabs);
+  const toastMsg = useWorkbenchStore((s) => s.toastMsg);
+  const patch = useSettingsStore((s) => s.patch);
+  const applyPreset = useSettingsStore((s) => s.applyPreset);
+  const exportWorkbench = useWorkbenchStore((s) => s.exportWorkbench);
+  const importWorkbench = useWorkbenchStore((s) => s.importWorkbench);
+  const toggleFocusMaximize = useWorkbenchStore((s) => s.toggleFocusMaximize);
+  const focusMaximized = useWorkbenchStore((s) => s.focusMaximized);
+  const applyLayoutTemplate = useWorkbenchStore((s) => s.applyLayoutTemplate);
+  const applyCustomTemplate = useWorkbenchStore((s) => s.applyCustomTemplate);
+  const saveCurrentAsTemplate = useWorkbenchStore((s) => s.saveCurrentAsTemplate);
+  const saveWorkspace = useWorkbenchStore((s) => s.saveWorkspace);
+  const switchWorkspace = useWorkbenchStore((s) => s.switchWorkspace);
+  const listWorkspaces = useWorkbenchStore((s) => s.listWorkspaces);
+  const insertToPane = useWorkbenchStore((s) => s.insertToPane);
+
+  const items: Item[] = useMemo(() => {
+    const list: Item[] = [
+      {
+        id: "ai-focus",
+        label: "聚焦 Agent（工作台中枢）",
+        hint: "推荐",
+        run: () => {
+          setAiOpen(true);
+          window.setTimeout(() => {
+            document.getElementById("ai-input")?.focus();
+          }, 50);
+          toastMsg("Agent 已就绪 · 直接描述你要做的事");
+        },
+      },
+      {
+        id: "ai-toggle",
+        label: aiOpen ? "隐藏 Agent 面板" : "显示 Agent 面板",
+        hint: "Ctrl+Shift+A",
+        run: () => setAiOpen(!aiOpen),
+      },
+      {
+        id: "ai-new",
+        label: "新建 Agent 会话",
+        run: () => {
+          setAiOpen(true);
+          newAgentSession();
+        },
+      },
+      {
+        id: "settings",
+        label: "打开设置",
+        hint: "Ctrl+,",
+        run: () => nav("/settings"),
+      },
+      {
+        id: "split-h",
+        label: "向右拆分窗格",
+        hint: "Alt+Shift+D",
+        run: () => addPane("h"),
+      },
+      {
+        id: "split-v",
+        label: "向下拆分窗格",
+        hint: "Alt+Shift+E",
+        run: () => addPane("v"),
+      },
+      {
+        id: "max-pane",
+        label: focusMaximized ? "还原分屏布局" : "最大化焦点窗格",
+        hint: "Ctrl+Shift+M",
+        run: () => toggleFocusMaximize(),
+      },
+      {
+        id: "clear",
+        label: "清屏焦点窗格",
+        hint: "Ctrl+L",
+        run: () => clearPane(),
+      },
+      {
+        id: "export",
+        label: "导出工作台 JSON",
+        run: () => exportWorkbench(),
+      },
+      {
+        id: "import",
+        label: "导入工作台 JSON…",
+        run: () => {
+          const input = document.createElement("input");
+          input.type = "file";
+          input.accept = "application/json,.json";
+          input.onchange = () => {
+            const file = input.files?.[0];
+            if (!file) return;
+            void file.text().then((t) => importWorkbench(t));
+          };
+          input.click();
+        },
+      },
+      {
+        id: "theme-cycle",
+        label: "切换主题预设",
+        run: () => {
+          const order = ["cyan", "green", "violet", "amber", "slate"];
+          const cur = useSettingsStore.getState().themePreset;
+          const next = order[(order.indexOf(cur) + 1) % order.length];
+          applyPreset(next);
+          toastMsg(`主题 · ${next}`);
+        },
+      },
+      {
+        id: "toggle-mock",
+        label: "切换模拟终端 / 真 PTY 标记",
+        hint: "开发",
+        run: () => {
+          useWorkbenchStore.setState((s) => ({ useMockTerminal: !s.useMockTerminal }));
+          toastMsg("已切换终端模式（需重建窗格生效）");
+        },
+      },
+      ...shellProfiles.map((p) => ({
+        id: `tab-${p.id}`,
+        label: `新建标签 · ${p.name}`,
+        run: () => createTabFromProfile(p),
+      })),
+      {
+        id: "tpl-dual",
+        label: "布局模板 · 左右双屏",
+        run: () => applyLayoutTemplate("edit-build"),
+      },
+      {
+        id: "tpl-log",
+        label: "布局模板 · 编辑+构建+日志",
+        run: () => applyLayoutTemplate("edit-build-log"),
+      },
+      {
+        id: "tpl-triple",
+        label: "布局模板 · 三列",
+        run: () => applyLayoutTemplate("triple-h"),
+      },
+      {
+        id: "tpl-save",
+        label: "保存当前布局为模板…",
+        run: () => {
+          const name = window.prompt("模板名称", "我的布局");
+          if (name) saveCurrentAsTemplate(name);
+        },
+      },
+      ...loadCustomTemplates().map((t) => ({
+        id: `ctpl-${t.id}`,
+        label: `自定义模板 · ${t.name}`,
+        run: () => applyCustomTemplate(t.id),
+      })),
+      ...(() => {
+        ensureExampleExtension();
+        return allExtensionCommands().map((c) => ({
+          id: `ext-${c.id}`,
+          label: c.label,
+          run: () => {
+            if (c.runCommand) insertToPane(undefined, c.runCommand, true);
+            else if (c.insertText) insertToPane(undefined, c.insertText, false);
+            else toastMsg("扩展命令无内容");
+          },
+        }));
+      })(),
+      {
+        id: "ws-save",
+        label: "保存当前为工作区…",
+        run: () => {
+          const name = window.prompt("工作区名称", "我的项目");
+          if (name) saveWorkspace(name);
+        },
+      },
+      ...listWorkspaces().map((w) => ({
+        id: `ws-${w.id}`,
+        label: `切换工作区 · ${w.name}`,
+        run: () => switchWorkspace(w.id),
+      })),
+    ];
+
+    for (const tab of tabs) {
+      for (const leaf of collectLeaves(tab.layout)) {
+        list.push({
+          id: `focus-${leaf.id}`,
+          label: `聚焦窗格 #${leaf.serial} · ${shellMeta(leaf.shellKey).short}`,
+          hint: tab.title,
+          run: () => {
+            setActiveTab(tab.id);
+            setActivePane(leaf.id);
+          },
+        });
+      }
+    }
+
+    list.push({
+      id: "export-settings",
+      label: "导出设置 JSON",
+      run: () => {
+        const data = localStorage.getItem("sw-settings-v1") || "{}";
+        const blob = new Blob([data], { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "shell-workbench-settings.json";
+        a.click();
+        toastMsg("已导出设置");
+      },
+    });
+
+    list.push({
+      id: "accent",
+      label: "强调色 · 青 / 绿 / 蓝 / 橙 循环",
+      run: () => {
+        const hues = [195, 145, 250, 35];
+        const cur = useSettingsStore.getState().accentHue;
+        const next = hues[(hues.indexOf(cur) + 1) % hues.length];
+        patch({ accentHue: next });
+        toastMsg(`强调色 hue ${next}`);
+      },
+    });
+
+    return list;
+  }, [
+    aiOpen,
+    tabs,
+    addPane,
+    clearPane,
+    createTabFromProfile,
+    shellProfiles,
+    nav,
+    newAgentSession,
+    setActivePane,
+    setActiveTab,
+    setAiOpen,
+    toastMsg,
+    patch,
+    applyPreset,
+    exportWorkbench,
+    importWorkbench,
+    toggleFocusMaximize,
+    focusMaximized,
+    applyLayoutTemplate,
+    applyCustomTemplate,
+    saveCurrentAsTemplate,
+    saveWorkspace,
+    switchWorkspace,
+    listWorkspaces,
+    insertToPane,
+  ]);
+
+  const filtered = useMemo(() => {
+    const qq = q.trim().toLowerCase();
+    if (!qq) return items;
+    return items.filter(
+      (i) => i.label.toLowerCase().includes(qq) || (i.hint && i.hint.toLowerCase().includes(qq)),
+    );
+  }, [items, q]);
+
+  useEffect(() => {
+    if (open) {
+      setQ("");
+      setIdx(0);
+    }
+  }, [open]);
+
+  useEffect(() => {
+    setIdx(0);
+  }, [q]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="cmd-palette-backdrop"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="cmd-palette" role="dialog" aria-label="命令面板">
+        <input
+          className="cmd-palette-input"
+          autoFocus
+          placeholder="输入命令…（Ctrl+Shift+P）"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              onClose();
+            }
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setIdx((i) => Math.min(filtered.length - 1, i + 1));
+            }
+            if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setIdx((i) => Math.max(0, i - 1));
+            }
+            if (e.key === "Enter") {
+              e.preventDefault();
+              const item = filtered[idx];
+              if (item) {
+                item.run();
+                onClose();
+              }
+            }
+          }}
+        />
+        <div className="cmd-palette-list">
+          {filtered.length === 0 && (
+            <div className="cmd-palette-empty">无匹配命令</div>
+          )}
+          {filtered.map((item, i) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`cmd-palette-item${i === idx ? " active" : ""}`}
+              onMouseEnter={() => setIdx(i)}
+              onClick={() => {
+                item.run();
+                onClose();
+              }}
+            >
+              <span>{item.label}</span>
+              {item.hint && <kbd>{item.hint}</kbd>}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

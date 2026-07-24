@@ -1,0 +1,40 @@
+/* Shell Workbench design tokens — source: prototype HTML :root */
+:root {
+      /* Defaults before applyThemeCssVars; alpha applied at runtime via --ui-opacity */
+      --ui-opacity: 1;
+      --bg: oklch(0.16 0.012 250 / 1);
+      --surface: oklch(0.20 0.012 250 / 1);
+      --surface-2: oklch(0.24 0.012 250 / 1);
+      --fg: oklch(0.93 0.01 250);
+      --muted: oklch(0.65 0.02 250);
+      /* Soft hairline borders (runtime alpha via applyThemeCssVars) */
+      --border: oklch(0.62 0.01 250 / 0.45);
+      --border-subtle: oklch(0.58 0.008 250 / 0.28);
+      --border-strong: oklch(0.72 0.012 250 / 0.55);
+      --accent: oklch(0.72 0.14 195);
+      --accent-dim: oklch(0.45 0.08 195);
+      --success: oklch(0.72 0.15 145);
+      --warn: oklch(0.78 0.14 85);
+      --danger: oklch(0.65 0.18 25);
+      /* Match --bg so shell is not a separate near-black layer */
+      --term-bg: oklch(0.16 0.012 250 / 1);
+      --term-fg: oklch(0.88 0.02 145);
+      --term-prompt: oklch(0.78 0.14 195);
+      --term-cmd: oklch(0.92 0.01 250);
+      --term-err: oklch(0.70 0.18 25);
+      /* Active tabs / chips — solid enough to read, still glass when UI is translucent */
+      --chip: oklch(0.26 0.014 250 / 1);
+      --chip-hover: oklch(0.30 0.014 250 / 0.92);
+      --tab-active: oklch(0.28 0.015 250 / 1);
+      /* Floating menus */
+      --popover: oklch(0.20 0.012 250 / 0.55);
+      --font-display: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+      --font-body: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+      --font-mono: "Cascadia Code", "JetBrains Mono", "Consolas", "SF Mono", ui-monospace, monospace;
+      --radius: 6px;
+      --titlebar-h: 32px;
+      --tabbar-h: 38px;
+      --statusbar-h: 24px;
+      --shadow-panel: 0 12px 40px oklch(0 0 0 / 0.28);
+  --sidebar-w: 240px;
+}

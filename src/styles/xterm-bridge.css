@@ -1,0 +1,26 @@
+/* xterm host — canvas must not paint an opaque slab over .panes */
+.pane-body .xterm {
+  height: 100%;
+  width: 100%;
+  padding: 0;
+  background: transparent !important;
+}
+.pane-body .xterm-viewport {
+  overflow-y: auto !important;
+  background: transparent !important;
+}
+.pane-body .xterm-screen {
+  background: transparent !important;
+}
+/* WebGL/canvas layers: force transparent when allowTransparency is on */
+.pane-body .xterm canvas {
+  background: transparent !important;
+}
+.pane-body .terminal-host,
+.pane-body .terminal-host-wrap {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+}
