@@ -6,6 +6,7 @@ import {
   browserFallbackProfiles,
   mapScanRow,
 } from "../lib/shellProfile";
+import { onSshHostsChanged, sshProfiles } from "../lib/sshHosts";
 import { useSettingsStore } from "./settingsStore";
 
 type ShellCatalogState = {
@@ -30,14 +31,16 @@ export const useShellCatalogStore = create<ShellCatalogState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       if (!isTauri()) {
-        const profiles = browserFallbackProfiles();
+        const profiles = [...browserFallbackProfiles(), ...sshProfiles()];
         set({ profiles, loading: false, lastScanAt: Date.now() });
         return profiles;
       }
       const rows = await shellScan();
-      const profiles = rows
-        .filter((r) => r.available)
-        .map(mapScanRow);
+      // SSH hosts (1.0) join the catalog as remote profiles
+      const profiles = [
+        ...rows.filter((r) => r.available).map(mapScanRow),
+        ...sshProfiles(),
+      ];
       set({ profiles, loading: false, lastScanAt: Date.now(), error: null });
       return profiles;
     } catch (e) {
@@ -90,3 +93,8 @@ export const useShellCatalogStore = create<ShellCatalogState>((set, get) => ({
     );
   },
 }));
+
+// Host list changes → re-merge catalog (new-tab menu updates immediately)
+onSshHostsChanged(() => {
+  void useShellCatalogStore.getState().scan();
+});

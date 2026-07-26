@@ -28,6 +28,7 @@ import {
   type LiveTerm,
 } from "./termRegistry";
 import { resolveTerminalShortcut } from "../../lib/terminalShortcuts";
+import { InlineK } from "./InlineK";
 
 type Props = {
   paneId: string;
@@ -49,6 +50,7 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [kbarOpen, setKbarOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   // mirror suggestOpen for term.onData closure
   const suggestOpenRef = useRef(false);
@@ -245,6 +247,12 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
         if (mod && ev.altKey && (ev.key === "ArrowUp" || ev.key === "ArrowDown")) {
           ev.preventDefault();
           jumpToBlock(term, paneId, ev.key === "ArrowUp" ? -1 : 1);
+          return false;
+        }
+        // 1.0: inline Ctrl+K natural-language → command
+        if (mod && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === "k") {
+          ev.preventDefault();
+          setKbarOpen(true);
           return false;
         }
       }
@@ -637,6 +645,27 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
           </button>
         </div>
       )}
+      <InlineK
+        paneId={paneId}
+        shellKey={shellKey}
+        cwd={cwd || ""}
+        open={kbarOpen}
+        onClose={() => {
+          setKbarOpen(false);
+          getLiveTerm(paneId)?.term.focus();
+        }}
+        onInsert={(text, run) => {
+          const live = getLiveTerm(paneId);
+          if (!live?.ptyId || live.disposed) return;
+          if (run) {
+            // User-initiated run → same channel as action chips (danger policy)
+            useWorkbenchStore.getState().insertToPane(undefined, text, true);
+          } else {
+            live.blocks?.noteSubmittedCommand(text);
+            void ptyWrite(live.ptyId, text);
+          }
+        }}
+      />
       <XtermSuggest
         open={suggestOpen && active}
         prefix={suggestPrefix}

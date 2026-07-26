@@ -10,7 +10,6 @@ export type ExtensionManifest = {
   enabled?: boolean;
   agentSystemAppend?: string;
   commands?: { id: string; label: string; insertText?: string; runCommand?: string }[];
-  defaultCwd?: string;
 };
 
 export const EXT_STORE_KEY = "sw-extensions-v1";
@@ -38,13 +37,24 @@ export const EXAMPLE_EXTENSION: ExtensionManifest = {
 export function loadExtensions(): ExtensionManifest[] {
   try {
     const raw = localStorage.getItem(EXT_STORE_KEY);
-    if (!raw) return [{ ...EXAMPLE_EXTENSION }];
+    if (!raw) return exampleUnlessDismissed();
     const list = JSON.parse(raw) as ExtensionManifest[];
-    if (!Array.isArray(list) || list.length === 0) return [{ ...EXAMPLE_EXTENSION }];
+    if (!Array.isArray(list) || list.length === 0) return exampleUnlessDismissed();
     return list.map((e) => ({ enabled: true, ...e }));
   } catch {
-    return [{ ...EXAMPLE_EXTENSION }];
+    return exampleUnlessDismissed();
   }
+}
+
+/** B10: deleting the example must stick — tombstone beats auto-revival. */
+const EXAMPLE_DISMISSED_KEY = "sw-ext-example-dismissed";
+
+function exampleDismissed(): boolean {
+  return localStorage.getItem(EXAMPLE_DISMISSED_KEY) === "1";
+}
+
+function exampleUnlessDismissed(): ExtensionManifest[] {
+  return exampleDismissed() ? [] : [{ ...EXAMPLE_EXTENSION }];
 }
 
 export function saveExtensions(list: ExtensionManifest[]) {
@@ -53,7 +63,7 @@ export function saveExtensions(list: ExtensionManifest[]) {
 
 export function ensureExampleExtension() {
   const list = loadExtensions();
-  if (!list.some((e) => e.id === EXAMPLE_EXTENSION.id)) {
+  if (!exampleDismissed() && !list.some((e) => e.id === EXAMPLE_EXTENSION.id)) {
     list.unshift({ ...EXAMPLE_EXTENSION });
     saveExtensions(list);
   }
@@ -94,7 +104,7 @@ export function setExtensionEnabled(id: string, enabled: boolean) {
 
 export function removeExtension(id: string) {
   if (id === EXAMPLE_EXTENSION.id) {
-    // allow disable but keep file — user can remove custom only? allow remove all
+    localStorage.setItem(EXAMPLE_DISMISSED_KEY, "1");
   }
   saveExtensions(loadExtensions().filter((e) => e.id !== id));
 }
@@ -111,7 +121,6 @@ export function importExtensionJson(raw: string): ExtensionManifest {
     enabled: data.enabled !== false,
     agentSystemAppend: data.agentSystemAppend,
     commands: data.commands,
-    defaultCwd: data.defaultCwd,
   };
   list.unshift(ext);
   saveExtensions(list);

@@ -7,7 +7,7 @@ import { create } from "zustand";
  * requestAppClose) — every confirmation in the app must go through here.
  */
 
-type DialogKind = "confirm" | "prompt";
+type DialogKind = "confirm" | "prompt" | "approval";
 
 type DialogRequest = {
   id: string;
@@ -21,6 +21,8 @@ type DialogRequest = {
   danger?: boolean;
   okLabel?: string;
   cancelLabel?: string;
+  /** approval only: monospace payload (command / tool args) */
+  detail?: string;
   resolve: (value: string | boolean | null) => void;
 };
 
@@ -84,6 +86,39 @@ export function askPrompt(title: string, opts: PromptOptions = {}): Promise<stri
   });
 }
 
+export type ApprovalAnswer = "once" | "always" | "deny";
+
+export type ApprovalDialogOptions = {
+  /** e.g. "Agent 想执行命令" */
+  message?: string;
+  /** full command / tool args, rendered monospace */
+  detail?: string;
+  /** danger highlight + reason line */
+  danger?: boolean;
+};
+
+/**
+ * 1.0 审批弹窗: 允许一次 / 总是允许（写入规则）/ 拒绝。
+ * ESC / backdrop = deny.
+ */
+export function askApproval(
+  title: string,
+  opts: ApprovalDialogOptions = {},
+): Promise<ApprovalAnswer> {
+  return new Promise((resolve) => {
+    useDialogStore.getState().push({
+      id: `dlg-${++seq}`,
+      kind: "approval",
+      title,
+      message: opts.message,
+      detail: opts.detail,
+      danger: opts.danger,
+      resolve: (v) =>
+        resolve(v === "once" || v === "always" ? (v as ApprovalAnswer) : "deny"),
+    });
+  });
+}
+
 /** Mount once at app root. Renders the head of the dialog queue. */
 export function AppDialogHost() {
   const current = useDialogStore((s) => s.queue[0] ?? null);
@@ -95,7 +130,7 @@ export function AppDialogHost() {
   useEffect(() => {
     if (!current) return;
     setValue(current.defaultValue ?? "");
-    // Focus after paint: input for prompt, OK button for confirm
+    // Focus after paint: input for prompt, OK button otherwise
     const t = window.setTimeout(() => {
       if (current.kind === "prompt") inputRef.current?.select();
       else okRef.current?.focus();
@@ -110,8 +145,12 @@ export function AppDialogHost() {
     shift();
   };
 
+  const cancelValue = () =>
+    current.kind === "prompt" ? null : current.kind === "approval" ? "deny" : false;
+
   const submit = () => {
     if (current.kind === "prompt") finish(value);
+    else if (current.kind === "approval") finish("once");
     else finish(true);
   };
 
@@ -119,19 +158,26 @@ export function AppDialogHost() {
     <div
       className="cmd-palette-backdrop app-dialog-backdrop"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) finish(current.kind === "prompt" ? null : false);
+        if (e.target === e.currentTarget) finish(cancelValue());
       }}
       onKeyDown={(e) => {
         if (e.key === "Escape") {
           e.preventDefault();
           e.stopPropagation();
-          finish(current.kind === "prompt" ? null : false);
+          finish(cancelValue());
         }
       }}
     >
       <div className="app-dialog" role="dialog" aria-modal="true" aria-label={current.title}>
         <div className="app-dialog-title">{current.title}</div>
         {current.message && <div className="app-dialog-message">{current.message}</div>}
+        {current.kind === "approval" && current.detail && (
+          <pre
+            className={`app-dialog-detail${current.danger ? " danger" : ""}`}
+          >
+            {current.detail}
+          </pre>
+        )}
         {current.kind === "prompt" && (
           <input
             ref={inputRef}
@@ -147,23 +193,51 @@ export function AppDialogHost() {
             }}
           />
         )}
-        <div className="app-dialog-actions">
-          <button
-            type="button"
-            className="app-dialog-btn"
-            onClick={() => finish(current.kind === "prompt" ? null : false)}
-          >
-            {current.cancelLabel ?? "取消"}
-          </button>
-          <button
-            ref={okRef}
-            type="button"
-            className={`app-dialog-btn primary${current.danger ? " danger" : ""}`}
-            onClick={submit}
-          >
-            {current.okLabel ?? "确定"}
-          </button>
-        </div>
+        {current.kind === "approval" ? (
+          <div className="app-dialog-actions">
+            <button
+              type="button"
+              className="app-dialog-btn"
+              onClick={() => finish("deny")}
+            >
+              拒绝
+            </button>
+            <button
+              type="button"
+              className="app-dialog-btn"
+              title="写入允许规则（设置 → 审批 可撤销）"
+              onClick={() => finish("always")}
+            >
+              总是允许
+            </button>
+            <button
+              ref={okRef}
+              type="button"
+              className={`app-dialog-btn primary${current.danger ? " danger" : ""}`}
+              onClick={() => finish("once")}
+            >
+              允许一次
+            </button>
+          </div>
+        ) : (
+          <div className="app-dialog-actions">
+            <button
+              type="button"
+              className="app-dialog-btn"
+              onClick={() => finish(cancelValue())}
+            >
+              {current.cancelLabel ?? "取消"}
+            </button>
+            <button
+              ref={okRef}
+              type="button"
+              className={`app-dialog-btn primary${current.danger ? " danger" : ""}`}
+              onClick={submit}
+            >
+              {current.okLabel ?? "确定"}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

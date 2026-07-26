@@ -730,3 +730,108 @@
   background: var(--surface-3, rgb(255 255 255 / 8%));
   color: var(--fg);
 }
+
+/* ---- Approval dialog (1.0) ---- */
+.app-dialog-detail {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgb(0 0 0 / 25%);
+  color: var(--fg);
+  font-family: var(--term-font-family, var(--font-mono));
+  font-size: 12px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.app-dialog-detail.danger {
+  border-color: oklch(0.62 0.18 25);
+  background: oklch(0.4 0.13 25 / 0.18);
+}
+
+/* ---- Inline Ctrl+K (1.0) ---- */
+.inline-k {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 32;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--surface-1, var(--panel-bg, #1b1e24));
+  box-shadow: 0 6px 20px rgb(0 0 0 / 45%);
+}
+
+.inline-k-icon {
+  flex: 0 0 auto;
+  font-size: 13px;
+}
+
+.inline-k-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--term-font-family, var(--font-mono));
+  font-size: 13px;
+  outline: none;
+}
+
+.inline-k-input.danger {
+  color: oklch(0.72 0.15 25);
+}
+
+.inline-k-busy,
+.inline-k-danger-note {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.inline-k-danger-note {
+  color: oklch(0.72 0.15 25);
+}
+
+/* ---- Cast player (1.0 会话回放) ---- */
+.cast-player {
+  width: min(920px, calc(100vw - 48px));
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-1, var(--panel-bg, #14171c));
+  box-shadow: 0 12px 40px rgb(0 0 0 / 55%);
+}
+
+.cast-player-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.cast-player-term {
+  min-height: 320px;
+  max-height: 60vh;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #101318;
+  padding: 6px;
+}
+
+.cast-player-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

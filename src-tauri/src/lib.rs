@@ -1,5 +1,7 @@
 mod agent_api;
+mod mcp_host;
 mod pty_host;
+mod recorder;
 mod shell_integration;
 mod shell_scan;
 
@@ -69,6 +71,89 @@ fn shell_scan() -> Vec<shell_scan::ShellProfile> {
   shell_scan::scan_shells()
 }
 
+/// Read ~/.ssh/config for the hosts import flow (1.0). Missing file → "".
+#[tauri::command]
+fn read_ssh_config() -> String {
+  dirs::home_dir()
+    .map(|h| h.join(".ssh").join("config"))
+    .and_then(|p| std::fs::read_to_string(p).ok())
+    .unwrap_or_default()
+}
+
+/// Start recording a PTY session to an asciinema cast v2 file.
+/// Returns the file path (auto-generated under ~/aether-recordings).
+#[tauri::command]
+fn pty_record_start(id: String, cols: Option<u16>, rows: Option<u16>) -> Result<String, String> {
+  let dir = dirs::home_dir()
+    .ok_or("无法定位用户目录")?
+    .join("aether-recordings");
+  std::fs::create_dir_all(&dir).map_err(|e| format!("创建录像目录失败: {e}"))?;
+  let stamp = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .map(|d| d.as_secs())
+    .unwrap_or(0);
+  let path = dir.join(format!("aether-{stamp}.cast"));
+  let p = path.to_string_lossy().to_string();
+  recorder::start(&id, &p, cols.unwrap_or(80), rows.unwrap_or(24))?;
+  Ok(p)
+}
+
+/// Stop recording; returns the cast path if one was active.
+#[tauri::command]
+fn pty_record_stop(id: String) -> Option<String> {
+  recorder::stop(&id)
+}
+
+#[tauri::command]
+fn pty_record_status(id: String) -> bool {
+  recorder::is_recording(&id)
+}
+
+/// Read a .cast file for playback (size-capped).
+#[tauri::command]
+fn read_cast_file(path: String) -> Result<String, String> {
+  const MAX: u64 = 8 * 1024 * 1024;
+  let meta = std::fs::metadata(&path).map_err(|e| format!("读取失败: {e}"))?;
+  if meta.len() > MAX {
+    return Err(format!("录像过大（{} MB > 8 MB）", meta.len() / 1024 / 1024));
+  }
+  std::fs::read_to_string(&path).map_err(|e| format!("读取失败: {e}"))
+}
+
+/// 1.0 项目级上下文：从 cwd 向上查找 AETHER.md（到 git root 为止）。
+#[tauri::command]
+fn project_context_read(cwd: String) -> Option<(String, String)> {
+  const MAX_BYTES: usize = 8 * 1024;
+  let mut dir = std::path::PathBuf::from(cwd);
+  if !dir.is_dir() {
+    return None;
+  }
+  for _ in 0..12 {
+    let candidate = dir.join("AETHER.md");
+    if candidate.is_file() {
+      if let Ok(mut content) = std::fs::read_to_string(&candidate) {
+        if content.len() > MAX_BYTES {
+          let mut cut = MAX_BYTES;
+          while cut > 0 && !content.is_char_boundary(cut) {
+            cut -= 1;
+          }
+          content.truncate(cut);
+          content.push_str("\n…[已截断]");
+        }
+        return Some((candidate.to_string_lossy().to_string(), content));
+      }
+    }
+    let at_git_root = dir.join(".git").exists();
+    if at_git_root {
+      return None;
+    }
+    if !dir.pop() {
+      return None;
+    }
+  }
+  None
+}
+
 #[tauri::command]
 async fn agent_models_list(req: agent_api::ModelsListRequest) -> Result<Vec<agent_api::ModelInfo>, String> {
   agent_api::list_models(req).await
@@ -126,12 +211,27 @@ pub fn run() {
       pty_resize,
       pty_close,
       shell_scan,
+      read_ssh_config,
+      pty_record_start,
+      pty_record_stop,
+      pty_record_status,
+      read_cast_file,
+      project_context_read,
       agent_models_list,
       agent_chat,
       agent_chat_cancel,
       agent_chat_tools,
-      agent_chat_stream_tools
+      agent_chat_stream_tools,
+      mcp_host::mcp_connect,
+      mcp_host::mcp_disconnect,
+      mcp_host::mcp_status,
+      mcp_host::mcp_call_tool
     ])
+    .on_window_event(|_, event| {
+      if let tauri::WindowEvent::Destroyed = event {
+        mcp_host::shutdown_all();
+      }
+    })
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }

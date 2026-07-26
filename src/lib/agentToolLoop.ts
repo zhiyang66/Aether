@@ -412,6 +412,51 @@ export async function executeAgentTool(
   const st = useWorkbenchStore.getState();
   const settings = useSettingsStore.getState();
 
+  // ── 1.0 统一审批入口：内置工具 / run_command / MCP 全走这里 ──
+  const { resolveApproval, addRule } = await import("./approval");
+  const { askApproval } = await import("../components/AppDialog");
+  const isMcp = name.startsWith("mcp__");
+  const mcpServer = isMcp ? name.split("__")[1] : undefined;
+  const approvalCmd = name === "run_command" ? String(args.command || "") : undefined;
+  const verdict = resolveApproval({ tool: name, command: approvalCmd, mcpServer });
+  /** User explicitly consented via dialog — overrides danger-insert downgrade */
+  let approvedViaDialog = false;
+  if (verdict.decision === "deny") {
+    return { ok: false, result: `已被审批规则拒绝（${verdict.reason}）` };
+  }
+  if (verdict.decision === "ask") {
+    const detail =
+      approvalCmd ??
+      (argsJson && argsJson !== "{}" ? argsJson.slice(0, 600) : "（无参数）");
+    const ans = await askApproval(
+      isMcp
+        ? `Agent 想调用 MCP 工具 ${name.replace(/^mcp__[^_]+__/, "")}`
+        : name === "run_command"
+          ? "Agent 想执行命令"
+          : `Agent 想使用工具 ${name}`,
+      {
+        message: verdict.dangerous
+          ? `⚠ 命中危险命令规则 · ${verdict.reason}`
+          : verdict.reason,
+        detail,
+        danger: verdict.dangerous,
+      },
+    );
+    if (ans === "deny") {
+      return { ok: false, result: "用户拒绝了此操作。请换一种方式或询问用户。" };
+    }
+    if (ans === "always") {
+      if (name === "run_command" && approvalCmd) {
+        addRule({ scope: "command-pattern", key: approvalCmd.trim(), decision: "allow" });
+      } else if (isMcp && mcpServer) {
+        addRule({ scope: "mcp-server", key: mcpServer, decision: "allow" });
+      } else {
+        addRule({ scope: "tool", key: name, decision: "allow" });
+      }
+    }
+    approvedViaDialog = true;
+  }
+
   if (name === "list_panes") {
     const rows: string[] = [];
     st.tabs.forEach((tab, ti) => {
@@ -637,8 +682,17 @@ export async function executeAgentTool(
       }
     }
 
-    // Shared policy with the store path (resolveDangerAction) — channels must agree
-    const decision = resolveDangerAction(command, settings, true);
+    // Shared policy with the store path (resolveDangerAction) — channels must
+    // agree. Explicit dialog approval overrides the danger-insert downgrade
+    // (the user just saw the full command and said run), but never execMode=insert.
+    let decision = resolveDangerAction(command, settings, true);
+    if (
+      approvedViaDialog &&
+      decision.note === "danger-insert" &&
+      settings.execMode !== "insert"
+    ) {
+      decision = { ...decision, run: true, note: "" };
+    }
     if (!decision.run) {
       await ptyWrite(ptyId, command);
       if (decision.note === "danger-insert") {
@@ -971,6 +1025,24 @@ export async function executeAgentTool(
     return { ok: true, result: `已更新: ${notes.join(" · ")}` };
   }
 
+  // ── MCP tools (1.0): mcp__<server>__<tool> → Rust runtime ──
+  if (isMcp) {
+    const { buildMcpToolTable, callMcpTool } = await import("./mcp");
+    const binding = buildMcpToolTable().bindings.get(name);
+    if (!binding) {
+      return { ok: false, result: `MCP 工具 ${name} 未连接（server 可能已停用）` };
+    }
+    try {
+      const out = await callMcpTool(binding.serverId, binding.tool, args);
+      return { ok: true, result: out || "（空结果）" };
+    } catch (e) {
+      return {
+        ok: false,
+        result: `MCP 调用失败: ${e instanceof Error ? e.message : String(e)}`,
+      };
+    }
+  }
+
   return { ok: false, result: `未知工具: ${name}` };
 }
 
@@ -1038,6 +1110,17 @@ export async function runAgentToolLoop(opts: {
   const trace: ToolTraceStep[] = [];
   const joined = () => texts.join("\n\n").trim();
 
+  // MCP tools join the table for every round (broken servers skipped silently)
+  let allTools: unknown[] = [...AGENT_TOOLS_OPENAI];
+  try {
+    const { ensureMcpConnected, buildMcpToolTable } = await import("./mcp");
+    await ensureMcpConnected();
+    const { tools: mcpTools } = buildMcpToolTable();
+    if (mcpTools.length) allTools = [...AGENT_TOOLS_OPENAI, ...mcpTools];
+  } catch {
+    /* MCP unavailable → built-ins only */
+  }
+
   const round = (tools: unknown) =>
     agentChatStreamToolsRound({
       endpoint: opts.endpoint,
@@ -1056,7 +1139,7 @@ export async function runAgentToolLoop(opts: {
     }
     opts.cb?.onStatus?.(r === 0 ? "思考中…" : `工具回合 ${r}/${maxRounds}…`);
 
-    const res = await round(AGENT_TOOLS_OPENAI);
+    const res = await round(allTools);
 
     if (res.content) texts.push(res.content);
 

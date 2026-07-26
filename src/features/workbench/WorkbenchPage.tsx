@@ -8,6 +8,7 @@ import { Statusbar } from "./Statusbar";
 import { isTauri } from "../../lib/window";
 import { Toast } from "../../components/Toast";
 import { CommandPalette } from "../../components/CommandPalette";
+import { CastPlayer } from "../../components/CastPlayer";
 import { useWorkbenchStore } from "../../store/workbenchStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { collectLeaves } from "../../lib/layout";
@@ -43,6 +44,32 @@ export function WorkbenchPage() {
     const openPal = () => setPaletteOpen(true);
     window.addEventListener("sw:open-palette", openPal);
     return () => window.removeEventListener("sw:open-palette", openPal);
+  }, []);
+
+  // 1.0: silent background update check on startup (B13 closed loop)
+  useEffect(() => {
+    const feed = useSettingsStore.getState().updateFeedUrl?.trim();
+    if (!feed) return;
+    const t = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const { checkForUpdate } = await import("../../lib/updateCheck");
+          const version =
+            typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0";
+          const r = await checkForUpdate({ current: version, feedUrl: feed });
+          if (r.status === "available") {
+            useWorkbenchStore
+              .getState()
+              .toastMsg(
+                `发现新版本 ${r.remote.version} · 设置 → 关于 可查看下载`,
+              );
+          }
+        } catch {
+          /* silent */
+        }
+      })();
+    }, 5000);
+    return () => window.clearTimeout(t);
   }, []);
 
   useEffect(() => {
@@ -192,6 +219,7 @@ export function WorkbenchPage() {
         aiOpen={aiOpen}
       />
       <Toast />
+      <CastPlayer />
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
   );

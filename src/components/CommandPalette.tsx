@@ -176,6 +176,11 @@ export function CommandPalette({
         run: () => createTabFromProfile(p),
       })),
       {
+        id: "tpl-single",
+        label: "布局模板 · 单窗格",
+        run: () => applyLayoutTemplate("single"),
+      },
+      {
         id: "tpl-dual",
         label: "布局模板 · 左右双屏",
         run: () => applyLayoutTemplate("edit-build"),
@@ -248,6 +253,82 @@ export function CommandPalette({
           },
         }));
       })(),
+      {
+        id: "rec-toggle",
+        label: "录制当前窗格 · 开始/停止",
+        hint: ".cast",
+        run: () => {
+          void (async () => {
+            const { getLiveTerm } = await import("../features/terminal/termRegistry");
+            const { recordStart, recordStop, recordStatus } = await import(
+              "../lib/recording"
+            );
+            const st = useWorkbenchStore.getState();
+            const paneId = st.activePaneId;
+            const live = paneId ? getLiveTerm(paneId) : undefined;
+            if (!live?.ptyId || live.disposed) {
+              toastMsg("焦点窗格没有活动的 PTY 会话");
+              return;
+            }
+            try {
+              if (await recordStatus(live.ptyId)) {
+                const p = await recordStop(live.ptyId);
+                if (p) {
+                  localStorage.setItem("sw-last-cast", p);
+                  toastMsg(`录像已保存: ${p}`);
+                }
+              } else {
+                const p = await recordStart(
+                  live.ptyId,
+                  live.term.cols,
+                  live.term.rows,
+                );
+                localStorage.setItem("sw-last-cast", p);
+                toastMsg(`开始录制 → ${p}`);
+              }
+            } catch (e) {
+              toastMsg(`录制失败: ${e instanceof Error ? e.message : e}`);
+            }
+          })();
+        },
+      },
+      {
+        id: "rec-play",
+        label: "打开录像回放…",
+        run: () => {
+          void askPrompt("打开录像", {
+            message: "输入 .cast 文件完整路径",
+            defaultValue: localStorage.getItem("sw-last-cast") ?? "",
+            placeholder: "~/aether-recordings/aether-*.cast",
+          }).then((p) => {
+            if (p?.trim()) {
+              window.dispatchEvent(
+                new CustomEvent("sw:open-cast", { detail: { path: p.trim() } }),
+              );
+            }
+          });
+        },
+      },
+      {
+        id: "aether-md",
+        label: "为当前项目创建 AETHER.md（Agent 起草）",
+        run: () => {
+          if (!useSettingsStore.getState().aiEnabled) {
+            toastMsg("需要启用 Agent（设置 → Agent）");
+            return;
+          }
+          setAiOpen(true);
+          window.setTimeout(() => {
+            window.dispatchEvent(
+              new CustomEvent("sw:ai-send", {
+                detail: {
+                  text: "请查看当前焦点窗格的 cwd 与目录结构（可 run_command 列目录），然后在项目根目录起草一份 AETHER.md：包含项目简介、目录结构说明、常用命令（构建/测试/运行）、注意事项。先给我看内容，确认后再写入文件。",
+                },
+              }),
+            );
+          }, 80);
+        },
+      },
       {
         id: "ws-save",
         label: "保存当前为工作区…",

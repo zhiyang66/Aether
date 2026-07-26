@@ -65,6 +65,8 @@ export type SettingsState = {
   updateFeedUrl: string;
   /** Show agent thinking / reasoning UI (composer toggle) */
   showThinking: boolean;
+  /** 1.0: inject AETHER.md project context (found upward from pane cwd) */
+  projectContext: boolean;
 
   load: () => void;
   save: () => void;
@@ -132,6 +134,7 @@ const defaults = (): Omit<
   outputSnapshotLines: 200,
   updateFeedUrl: "",
   showThinking: false,
+  projectContext: true,
 });
 
 const STORAGE_KEY = "sw-settings-v1";

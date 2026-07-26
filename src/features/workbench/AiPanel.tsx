@@ -471,11 +471,32 @@ export function AiPanel() {
       } catch {
         /* listener failure → previews unavailable but loop still works */
       }
+      // 1.0 项目级上下文：焦点窗格 cwd 向上找 AETHER.md（git root 截止）
+      let projectCtx = "";
+      if (settings.projectContext && isTauri()) {
+        try {
+          const cwd = useWorkbenchStore.getState().activePane()?.cwd || "";
+          if (cwd) {
+            const { invoke } = await import("@tauri-apps/api/core");
+            const hit = await invoke<[string, string] | null>(
+              "project_context_read",
+              { cwd },
+            );
+            if (hit) {
+              projectCtx = `## 项目上下文（${hit[0]}）\n${hit[1]}`;
+            }
+          }
+        } catch {
+          /* best-effort */
+        }
+      }
+
       const system = [
         AGENT_BASE_PROMPT,
         formatAgentSkillsPrompt(),
         agentSystemFromExtensions(),
         formatActiveTaskPrompt(),
+        projectCtx,
         "注意：终端上下文可能已截断并脱敏（密钥类字段显示为 ***REDACTED***）。",
         `标签页数: ${bundle.tabCount}`,
         `标签列表: ${bundle.tabsLine}`,
@@ -784,8 +805,22 @@ export function AiPanel() {
         void sendWithTextRef.current?.(prompt);
       })();
     };
+    // Generic entry: palette items can send a prepared prompt to the agent
+    const onSend = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ text: string }>).detail;
+      if (!detail?.text) return;
+      if (useWorkbenchStore.getState().agentBusy) {
+        toastMsg("生成中 · 请先停止或等待完成");
+        return;
+      }
+      void sendWithTextRef.current?.(detail.text);
+    };
     window.addEventListener("sw:ai-diagnose", onDiagnose);
-    return () => window.removeEventListener("sw:ai-diagnose", onDiagnose);
+    window.addEventListener("sw:ai-send", onSend);
+    return () => {
+      window.removeEventListener("sw:ai-diagnose", onDiagnose);
+      window.removeEventListener("sw:ai-send", onSend);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

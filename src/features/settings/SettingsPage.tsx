@@ -11,6 +11,9 @@ import { THEME_PRESETS } from "../../lib/themes";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { ExtensionsPanel } from "./ExtensionsPanel";
 import { SnippetsPanel } from "./SnippetsPanel";
+import { ApprovalPanel } from "./ApprovalPanel";
+import { McpPanel } from "./McpPanel";
+import { HostsPanel } from "./HostsPanel";
 import { checkForUpdate } from "../../lib/updateCheck";
 import { askConfirm } from "../../components/AppDialog";
 import logoUrl from "../../assets/logo.png";
@@ -23,9 +26,12 @@ const APP_VERSION = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "
 type PanelId =
   | "general"
   | "shells"
+  | "hosts"
   | "appearance"
   | "workspaces"
   | "ai"
+  | "approval"
+  | "mcp"
   | "extensions"
   | "completion"
   | "snippets"
@@ -35,9 +41,12 @@ type PanelId =
 const NAV: { id: PanelId; label: string; group: string }[] = [
   { id: "general", label: "常规", group: "应用" },
   { id: "shells", label: "Shell 配置", group: "应用" },
+  { id: "hosts", label: "SSH 主机", group: "应用" },
   { id: "appearance", label: "外观", group: "应用" },
   { id: "workspaces", label: "工作区", group: "应用" },
   { id: "ai", label: "Agent", group: "智能" },
+  { id: "approval", label: "审批", group: "智能" },
+  { id: "mcp", label: "MCP", group: "智能" },
   { id: "extensions", label: "扩展", group: "智能" },
   { id: "completion", label: "命令联想", group: "输入" },
   { id: "snippets", label: "命令片段", group: "输入" },
@@ -375,6 +384,19 @@ export function SettingsPage() {
             </section>
           )}
 
+          {panel === "hosts" && (
+            <section className="panel active">
+              <div className="panel-header">
+                <h1>SSH 主机</h1>
+                <p>
+                  以系统 ssh 为内核的远程主机管理：主机即 Shell 配置，
+                  在新建标签 / 分屏菜单中一键连接。密钥路径仅存本机。
+                </p>
+              </div>
+              <HostsPanel />
+            </section>
+          )}
+
           {panel === "appearance" && (
             <section className="panel active">
               <div className="panel-header">
@@ -477,6 +499,33 @@ export function SettingsPage() {
                 <p>保存并切换整套终端布局与默认目录，便于多项目切换。</p>
               </div>
               <WorkspacePanel />
+            </section>
+          )}
+
+          {panel === "approval" && (
+            <section className="panel active">
+              <div className="panel-header">
+                <h1>审批</h1>
+                <p>
+                  Agent 每次使用工具、执行命令、调用 MCP 前都会经过这里的策略：
+                  规则优先，其次预设档；「总是允许」写入的规则在此可见、可撤销。
+                </p>
+              </div>
+              <ApprovalPanel />
+            </section>
+          )}
+
+          {panel === "mcp" && (
+            <section className="panel active">
+              <div className="panel-header">
+                <h1>MCP</h1>
+                <p>
+                  连接 Model Context Protocol server，把外部工具（文件系统、数据库、
+                  浏览器…）开放给 Agent。stdio 为本地进程，http 为远程端点；
+                  所有调用都经过「审批」策略。
+                </p>
+              </div>
+              <McpPanel />
             </section>
           )}
 
@@ -619,6 +668,15 @@ export function SettingsPage() {
                       />
                       <span className="slider-val">{s.contextLines}</span>
                     </div>
+                  </Row>
+                  <Row
+                    label="项目上下文 AETHER.md"
+                    desc="从焦点窗格 cwd 向上查找 AETHER.md 注入请求（8KB 上限，git 根目录截止）"
+                  >
+                    <Switch
+                      checked={s.projectContext}
+                      onChange={(v) => s.patch({ projectContext: v })}
+                    />
                   </Row>
                   <Row
                     label="危险命令保护"

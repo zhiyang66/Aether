@@ -101,6 +101,7 @@ impl PtyHost {
           }
           Ok(n) => {
             let chunk = buf[..n].to_vec();
+            crate::recorder::record_output(&id_clone, &chunk);
             let _ = app_clone.emit(
               "pty://data",
               PtyDataEvent {
@@ -146,6 +147,7 @@ impl PtyHost {
   pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), String> {
     let map = self.sessions.lock();
     let sess = map.get(id).ok_or_else(|| "pty not found".to_string())?;
+    crate::recorder::record_resize(id, cols, rows);
     sess.master
       .resize(PtySize {
         rows,
@@ -159,6 +161,7 @@ impl PtyHost {
   pub fn close(&self, id: &str) -> Result<(), String> {
     let mut map = self.sessions.lock();
     map.remove(id);
+    crate::recorder::stop(id);
     Ok(())
   }
 }
