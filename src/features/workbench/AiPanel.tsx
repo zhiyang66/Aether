@@ -15,7 +15,12 @@ import {
 } from "../../lib/agentActions";
 import { splitAgentReply } from "../../lib/agentReply";
 import { agentSystemFromExtensions, ensureExampleExtension } from "../../lib/extensions";
-import { createTask, planFromText, setActiveTask } from "../../lib/agentTasks";
+import {
+  createTask,
+  formatActiveTaskPrompt,
+  planFromText,
+  setActiveTask,
+} from "../../lib/agentTasks";
 import { AGENT_BASE_PROMPT, formatAgentSkillsPrompt } from "../../lib/agentPrompt";
 import { findLeaf } from "../../lib/layout";
 import { TaskPanel } from "../agent/TaskPanel";
@@ -470,6 +475,7 @@ export function AiPanel() {
         AGENT_BASE_PROMPT,
         formatAgentSkillsPrompt(),
         agentSystemFromExtensions(),
+        formatActiveTaskPrompt(),
         "注意：终端上下文可能已截断并脱敏（密钥类字段显示为 ***REDACTED***）。",
         `标签页数: ${bundle.tabCount}`,
         `标签列表: ${bundle.tabsLine}`,
@@ -502,7 +508,8 @@ export function AiPanel() {
           provider: settings.aiProvider,
           model,
           messages: baseMessages,
-          maxRounds: 5,
+          // Active task = plan-execute loop; give the model room to advance steps
+          maxRounds: formatActiveTaskPrompt() ? 12 : 5,
           streamId,
           effort: aiEffort,
           cb: {
@@ -652,7 +659,11 @@ export function AiPanel() {
     const title = (lines[0] || "未命名任务").slice(0, 48) || "未命名任务";
     const stepSrc = lines.slice(1).join("\n").trim() || body.trim() || title;
     const steps = planFromText(stepSrc);
-    const task = createTask(title, steps.length ? steps : planFromText(title));
+    const task = createTask(
+      title,
+      steps.length ? steps : planFromText(title),
+      useWorkbenchStore.getState().activeAgentSessionId ?? undefined,
+    );
     setActiveTask(task.id);
     setTasksOpen(true);
     setTaskRefresh((n) => n + 1);

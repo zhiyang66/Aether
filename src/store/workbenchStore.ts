@@ -143,6 +143,10 @@ type WorkbenchState = {
   toggleFocusMaximize: () => void;
   focusMaximized: boolean;
   layoutBackup: LayoutNode | null;
+  /** 0.9 广播输入：选中的窗格集合（≥2 时键入同步写入所有成员） */
+  broadcastPanes: string[];
+  toggleBroadcastPane: (paneId: string) => void;
+  clearBroadcast: () => void;
   applyLayoutTemplate: (templateId: string) => void;
   saveCurrentAsTemplate: (name: string) => void;
   applyCustomTemplate: (id: string) => void;
@@ -206,6 +210,14 @@ function disposeLayoutSessions(layouts: Array<LayoutNode | null | undefined>) {
     for (const leaf of collectLeaves(layout)) paneIds.add(leaf.id);
   }
   if (!paneIds.size) return;
+  // Dead panes must leave the broadcast set (input would be dropped anyway,
+  // but the statusbar count/warning has to stay truthful)
+  const st = useWorkbenchStore.getState();
+  if (st.broadcastPanes.some((id) => paneIds.has(id))) {
+    useWorkbenchStore.setState({
+      broadcastPanes: st.broadcastPanes.filter((id) => !paneIds.has(id)),
+    });
+  }
   void import("../features/terminal/XtermHost").then(({ disposePaneSession }) => {
     for (const id of paneIds) void disposePaneSession(id);
   });
@@ -265,6 +277,18 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
     agentStreamId: null,
     focusMaximized: false,
     layoutBackup: null,
+    broadcastPanes: [],
+
+    toggleBroadcastPane: (paneId) =>
+      set((s) => {
+        const on = s.broadcastPanes.includes(paneId);
+        const next = on
+          ? s.broadcastPanes.filter((id) => id !== paneId)
+          : [...s.broadcastPanes, paneId];
+        return { broadcastPanes: next };
+      }),
+
+    clearBroadcast: () => set({ broadcastPanes: [] }),
 
     bootstrap: () => {
       // Re-detect Tauri: store module may load before __TAURI_INTERNALS__ is injected
@@ -640,7 +664,11 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
           ? { ...t, layout: result.root as LayoutNode, activePaneId: next.id }
           : t,
       );
-      set({ tabs, activePaneId: next.id });
+      set({
+        tabs,
+        activePaneId: next.id,
+        broadcastPanes: get().broadcastPanes.filter((id) => id !== paneId),
+      });
       get().toastMsg(`已关闭窗格 #${result.closed.serial}`);
     },
 

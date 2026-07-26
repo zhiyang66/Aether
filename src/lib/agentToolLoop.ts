@@ -65,7 +65,7 @@ export const AGENT_TOOLS_OPENAI = [
     function: {
       name: "run_command",
       description:
-        "在指定窗格执行一条 shell 命令（写入并回车）。危险命令在确认模式下可能仅插入不执行。",
+        "在指定窗格执行一条 shell 命令（写入并回车）。危险命令在确认模式下可能仅插入不执行。wait_for_exit=true 时等待命令块退出码（需 Shell 集成，最长 120s）——任务步骤执行请务必开启。",
       parameters: {
         type: "object",
         properties: {
@@ -73,7 +73,11 @@ export const AGENT_TOOLS_OPENAI = [
           serial: { type: "integer", description: "窗格 #N；省略=焦点" },
           wait_ms: {
             type: "integer",
-            description: "执行后等待毫秒再返回。默认 2500，最大 12000",
+            description: "执行后等待毫秒再返回。默认 2500，最大 12000（wait_for_exit 时为超时上限，默认 120000）",
+          },
+          wait_for_exit: {
+            type: "boolean",
+            description: "true=阻塞至命令结束并返回退出码（推荐任务步骤使用）",
           },
         },
         required: ["command"],
@@ -198,6 +202,99 @@ export const AGENT_TOOLS_OPENAI = [
           id: { type: "string", description: "switch 时的工作区 id" },
         },
         required: ["action"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "task_create",
+      description:
+        "创建多步任务计划（任务面板可见，用户可监督）。创建后按步骤用 run_command(wait_for_exit=true) 执行并 task_update_step 推进。",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "任务标题" },
+          steps: {
+            type: "array",
+            description: "步骤列表（按执行顺序）",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string", description: "步骤说明" },
+                command: { type: "string", description: "该步骤的 shell 命令（可选）" },
+                serial: { type: "integer", description: "执行窗格 #N（可选）" },
+              },
+              required: ["title"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["title", "steps"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "task_read",
+      description: "读取当前活动任务的完整状态（步骤、退出码、尝试次数、是否暂停）。",
+      parameters: {
+        type: "object",
+        properties: {
+          task_id: { type: "string", description: "任务 id；省略=当前活动任务" },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "task_update_step",
+      description: "更新任务步骤状态（done/failed/skipped/running），附结论摘要。",
+      parameters: {
+        type: "object",
+        properties: {
+          step: { type: "integer", description: "步骤序号（1 起）" },
+          status: {
+            type: "string",
+            enum: ["pending", "running", "done", "failed", "skipped"],
+          },
+          result_summary: { type: "string", description: "一句话结论（建议填写）" },
+          task_id: { type: "string", description: "省略=当前活动任务" },
+        },
+        required: ["step", "status"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "task_add_steps",
+      description: "向现有任务追加步骤（任务完成态会重新打开）。",
+      parameters: {
+        type: "object",
+        properties: {
+          steps: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string" },
+                command: { type: "string" },
+                serial: { type: "integer" },
+              },
+              required: ["title"],
+              additionalProperties: false,
+            },
+          },
+          task_id: { type: "string", description: "省略=当前活动任务" },
+        },
+        required: ["steps"],
         additionalProperties: false,
       },
     },
@@ -487,7 +584,10 @@ export async function executeAgentTool(
       args.serial != null && args.serial !== ""
         ? Number(args.serial)
         : st.activePane()?.serial;
-    const waitMs = Math.min(12000, Math.max(800, Number(args.wait_ms) || 2500));
+    const waitForExit = args.wait_for_exit === true || args.wait_for_exit === "true";
+    const waitMs = waitForExit
+      ? Math.min(300_000, Math.max(3000, Number(args.wait_ms) || 120_000))
+      : Math.min(12000, Math.max(800, Number(args.wait_ms) || 2500));
 
     let leaf =
       serial != null ? st.resolveSerial(serial) : st.activePane();
@@ -576,6 +676,57 @@ export async function executeAgentTool(
     }
 
     const leafId = leaf.id;
+
+    // ── wait_for_exit：block-driven（0.9 任务自治核心）──
+    if (waitForExit) {
+      const { lastBlock, readBlockOutput, formatDuration } = await import(
+        "./commandBlocks"
+      );
+      const { getLiveTerm } = await import("../features/terminal/termRegistry");
+      const t0 = Date.now();
+      const deadline = t0 + waitMs;
+      // Give the shell ~4s to emit the C-mark; no block → integration inactive
+      let blockSeen = false;
+      while (Date.now() < deadline) {
+        await sleep(300);
+        const b = lastBlock(leafId);
+        if (b && b.startedAt >= t0 - 1500) {
+          blockSeen = true;
+          if (!b.running) {
+            const live = getLiveTerm(leafId);
+            const out = live ? readBlockOutput(live.term, b, 80) : null;
+            const dur = formatDuration((b.endedAt ?? Date.now()) - b.startedAt);
+            return {
+              ok: true,
+              result: [
+                `已在 #${leaf.serial} 执行并等到结束: ${command}`,
+                `exitCode=${b.exitCode ?? "?"} · 耗时 ${dur}`,
+                "--- 输出 ---",
+                redactAndTrimContext(out || "（无输出）", 4000),
+              ].join("\n"),
+            };
+          }
+        } else if (!blockSeen && Date.now() - t0 > 4000) {
+          break; // no shell integration → snapshot fallback below
+        }
+      }
+      if (blockSeen) {
+        // Command still running at timeout — report honestly, let model decide
+        const out = getPaneOutput(leafId, 40);
+        return {
+          ok: true,
+          result: `已在 #${leaf.serial} 执行: ${command}\n[超时 ${Math.round(waitMs / 1000)}s 命令仍在运行 · exitCode=null] 可稍后 read_pane blocks=true 查看结果。\n--- 当前输出尾部 ---\n${redactAndTrimContext(out || "（暂无输出）", 2000)}`,
+        };
+      }
+      // Degrade: no OSC 133 (cmd/未注入) — snapshot semantics, unreliable
+      await sleep(2000);
+      const out = getPaneOutput(leafId, 60);
+      return {
+        ok: true,
+        result: `已在 #${leaf.serial} 执行: ${command}\n[该窗格无命令块（Shell 集成不可用），退出码未知，以下快照结果不可靠]\n--- 输出 ---\n${redactAndTrimContext(out || "（暂无输出）", 4000)}`,
+      };
+    }
+
     const deadline = Date.now() + waitMs;
     let out = getPaneOutput(leafId, 60);
     while (Date.now() < deadline) {
@@ -660,6 +811,114 @@ export async function executeAgentTool(
       return { ok: true, result: `已切换工作区 ${id}` };
     }
     return { ok: false, result: "action 须为 list | save | switch" };
+  }
+
+  if (
+    name === "task_create" ||
+    name === "task_read" ||
+    name === "task_update_step" ||
+    name === "task_add_steps"
+  ) {
+    const tasksLib = await import("./agentTasks");
+
+    const parseSteps = (
+      raw: unknown,
+    ): Array<{ title: string; command?: string; targetSerial?: number }> => {
+      if (!Array.isArray(raw)) return [];
+      return raw
+        .map((s) => {
+          const o = (s ?? {}) as Record<string, unknown>;
+          const title = String(o.title || "").trim();
+          if (!title) return null;
+          return {
+            title,
+            command: o.command ? String(o.command) : undefined,
+            targetSerial:
+              o.serial != null && o.serial !== "" ? Number(o.serial) : undefined,
+          };
+        })
+        .filter(Boolean) as Array<{
+        title: string;
+        command?: string;
+        targetSerial?: number;
+      }>;
+    };
+
+    if (name === "task_create") {
+      const title = String(args.title || "").trim();
+      const steps = parseSteps(args.steps);
+      if (!title) return { ok: false, result: "缺少 title" };
+      if (!steps.length) return { ok: false, result: "steps 为空或格式不对" };
+      const task = tasksLib.createTask(
+        title,
+        steps,
+        st.activeAgentSessionId ?? undefined,
+      );
+      return {
+        ok: true,
+        result: `已创建任务并设为活动：\n${tasksLib.formatTaskState(task)}`,
+      };
+    }
+
+    const taskId = args.task_id ? String(args.task_id) : null;
+    const task = taskId
+      ? tasksLib.getTask(taskId)
+      : tasksLib.getActiveTask();
+    if (!task) {
+      return {
+        ok: false,
+        result: taskId ? `任务 ${taskId} 不存在` : "当前没有活动任务（可 task_create）",
+      };
+    }
+
+    if (name === "task_read") {
+      return { ok: true, result: tasksLib.formatTaskState(task) };
+    }
+
+    if (name === "task_update_step") {
+      const idx = Number(args.step);
+      if (!Number.isFinite(idx) || idx < 1 || idx > task.steps.length) {
+        return {
+          ok: false,
+          result: `step 序号无效（1–${task.steps.length}）`,
+        };
+      }
+      const status = String(args.status) as
+        | "pending"
+        | "running"
+        | "done"
+        | "failed"
+        | "skipped";
+      if (!["pending", "running", "done", "failed", "skipped"].includes(status)) {
+        return { ok: false, result: "status 无效" };
+      }
+      const step = task.steps[idx - 1];
+      const patch: Record<string, unknown> = { status };
+      if (args.result_summary != null) {
+        patch.resultSummary = String(args.result_summary).slice(0, 200);
+      }
+      if (status === "running") {
+        patch.attempts = (step.attempts ?? 0) + 1;
+      }
+      const updated = tasksLib.updateStep(task.id, step.id, patch);
+      return {
+        ok: true,
+        result: updated
+          ? `已更新步骤 ${idx} → ${status}${updated.status === "done" ? " · 任务全部完成 ✓" : ""}`
+          : "更新失败",
+      };
+    }
+
+    // task_add_steps
+    const steps = parseSteps(args.steps);
+    if (!steps.length) return { ok: false, result: "steps 为空或格式不对" };
+    const updated = tasksLib.addSteps(task.id, steps);
+    return {
+      ok: true,
+      result: updated
+        ? `已追加 ${steps.length} 步：\n${tasksLib.formatTaskState(updated)}`
+        : "追加失败",
+    };
   }
 
   if (name === "app_settings") {

@@ -35,6 +35,7 @@ function LeafView({
   const runCommand = useWorkbenchStore((s) => s.runCommand);
   const clearPane = useWorkbenchStore((s) => s.clearPane);
   const useMock = useWorkbenchStore((s) => s.useMockTerminal);
+  const broadcastOn = useWorkbenchStore((s) => s.broadcastPanes.includes(pane.id));
   const settings = useSettingsStore();
   const bodyRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -243,6 +244,56 @@ function LeafView({
           </span>
         </span>
         <span className="ph-right">
+          {realTerm && (
+            <button
+              className="pane-icon-btn"
+              type="button"
+              title={
+                broadcastOn
+                  ? "退出广播（当前键入会同步到所有广播窗格）"
+                  : "加入广播输入（选 2 个以上窗格后键入同步）"
+              }
+              aria-label="广播输入"
+              aria-pressed={broadcastOn}
+              style={
+                broadcastOn
+                  ? { color: "var(--accent)", background: "var(--accent-dim)" }
+                  : undefined
+              }
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                useWorkbenchStore.getState().toggleBroadcastPane(pane.id);
+                const n = useWorkbenchStore.getState().broadcastPanes.length;
+                useWorkbenchStore
+                  .getState()
+                  .toastMsg(
+                    broadcastOn
+                      ? `#${pane.serial} 已退出广播（剩 ${n} 个）`
+                      : n >= 2
+                        ? `广播已生效 · ${n} 个窗格同步键入`
+                        : `#${pane.serial} 已加入广播 · 再选至少 1 个窗格`,
+                  );
+              }}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                <path
+                  d="M4 10v4h4l6 5V5l-6 5H4z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M17 9a4.5 4.5 0 0 1 0 6"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+          )}
           {realTerm && (
             <button
               className="pane-icon-btn"

@@ -7,6 +7,8 @@ export function Statusbar({ mock, aiOpen }: { mock: boolean; aiOpen: boolean }) 
   const tab = useWorkbenchStore((s) => s.activeTab());
   const pane = useWorkbenchStore((s) => s.activePane());
   const maximized = useWorkbenchStore((s) => s.windowMaximized);
+  const broadcastPanes = useWorkbenchStore((s) => s.broadcastPanes);
+  const clearBroadcast = useWorkbenchStore((s) => s.clearBroadcast);
   const [, setBlockTick] = useState(0);
 
   useEffect(() => onBlocksChanged(() => setBlockTick((v) => v + 1)), []);
@@ -41,6 +43,17 @@ export function Statusbar({ mock, aiOpen }: { mock: boolean; aiOpen: boolean }) 
         )}
       </div>
       <div className="status-right">
+        {broadcastPanes.length >= 2 && (
+          <button
+            type="button"
+            className="status-pill warn"
+            style={{ cursor: "pointer", border: "none", font: "inherit" }}
+            title="点击退出广播模式"
+            onClick={() => clearBroadcast()}
+          >
+            ⚠ 广播中 · {broadcastPanes.length} 窗格
+          </button>
+        )}
         <span className="status-item">{aiOpen ? "Agent 开" : "Agent 关"}</span>
         <span className="status-item">{maximized ? "最大化" : "窗口化"}</span>
         <span className="status-item">

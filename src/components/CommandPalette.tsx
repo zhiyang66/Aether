@@ -7,6 +7,32 @@ import { allExtensionCommands, ensureExampleExtension } from "../lib/extensions"
 import { askConfirm, askPrompt } from "./AppDialog";
 import { deleteCustomTemplate, loadCustomTemplates } from "../lib/customTemplates";
 import { useShellCatalogStore } from "../store/shellCatalogStore";
+import {
+  extractParams,
+  renderSnippet,
+  snippetsForShell,
+  type Snippet,
+} from "../lib/snippets";
+
+/** Fill snippet params via light prompt dialogs, then insert (no run). */
+export async function insertSnippetInteractive(
+  snippet: Snippet,
+  insertToPane: (serial: number | undefined, text: string, run: boolean) => void,
+): Promise<void> {
+  const names = extractParams(snippet.template);
+  const values: Record<string, string> = {};
+  for (const name of names) {
+    const def = snippet.params.find((p) => p.name === name)?.default ?? "";
+    const v = await askPrompt(`片段参数 · ${name}`, {
+      message: `「${snippet.name}」需要参数 ${name}`,
+      defaultValue: def,
+      placeholder: def || name,
+    });
+    if (v == null) return; // cancelled
+    values[name] = v;
+  }
+  insertToPane(undefined, renderSnippet(snippet, values), false);
+}
 
 type Item = {
   id: string;
@@ -198,6 +224,18 @@ export function CommandPalette({
           },
         },
       ]),
+      ...(() => {
+        const st = useWorkbenchStore.getState();
+        const shellKey = st.activePane()?.shellKey || "ps";
+        return snippetsForShell(shellKey).map((s) => ({
+          id: `snip-${s.id}`,
+          label: `片段 · ${s.name}`,
+          hint: s.template.length > 32 ? `${s.template.slice(0, 30)}…` : s.template,
+          run: () => {
+            void insertSnippetInteractive(s, insertToPane);
+          },
+        }));
+      })(),
       ...(() => {
         ensureExampleExtension();
         return allExtensionCommands().map((c) => ({

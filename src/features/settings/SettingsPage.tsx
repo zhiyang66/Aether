@@ -10,6 +10,7 @@ import { isTauri, winToggleMaximize } from "../../lib/window";
 import { THEME_PRESETS } from "../../lib/themes";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { ExtensionsPanel } from "./ExtensionsPanel";
+import { SnippetsPanel } from "./SnippetsPanel";
 import { checkForUpdate } from "../../lib/updateCheck";
 import { askConfirm } from "../../components/AppDialog";
 import logoUrl from "../../assets/logo.png";
@@ -27,6 +28,7 @@ type PanelId =
   | "ai"
   | "extensions"
   | "completion"
+  | "snippets"
   | "shortcuts"
   | "about";
 
@@ -38,6 +40,7 @@ const NAV: { id: PanelId; label: string; group: string }[] = [
   { id: "ai", label: "Agent", group: "智能" },
   { id: "extensions", label: "扩展", group: "智能" },
   { id: "completion", label: "命令联想", group: "输入" },
+  { id: "snippets", label: "命令片段", group: "输入" },
   { id: "shortcuts", label: "快捷键", group: "系统" },
   { id: "about", label: "关于", group: "系统" },
 ];
@@ -765,6 +768,19 @@ export function SettingsPage() {
                   </div>
                 </div>
               </div>
+            </section>
+          )}
+
+          {panel === "snippets" && (
+            <section className="panel active">
+              <div className="panel-header">
+                <h1>命令片段</h1>
+                <p>
+                  可复用命令模板，参数用 {"{name}"} 占位。命令面板（Ctrl+Shift+P）
+                  中调用，触发时弹窗填参后插入当前窗格。
+                </p>
+              </div>
+              <SnippetsPanel />
             </section>
           )}
 

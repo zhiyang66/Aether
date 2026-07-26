@@ -439,6 +439,15 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
             recordCommand(line, shellKey, historyLimit);
             notePaneCommand(paneId, line);
             tracker.noteSubmittedCommand(line);
+            // Broadcast members get the same command text for their blocks
+            const bcast = useWorkbenchStore.getState().broadcastPanes;
+            if (bcast.length >= 2 && bcast.includes(paneId)) {
+              for (const otherId of bcast) {
+                if (otherId !== paneId) {
+                  getLiveTerm(otherId)?.blocks?.noteSubmittedCommand(line);
+                }
+              }
+            }
             setSuggestOpen(false);
             setSuggestPrefix("");
           }
@@ -446,6 +455,17 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
           setSuggestPrefix(peek);
           setSuggestOpen(peek.trim().length >= 1);
           void ptyWrite(pid, data);
+          // 0.9 广播输入：本窗格在广播集合中 → 镜像写入其它成员 PTY
+          const bset = useWorkbenchStore.getState().broadcastPanes;
+          if (bset.length >= 2 && bset.includes(paneId)) {
+            for (const otherId of bset) {
+              if (otherId === paneId) continue;
+              const other = getLiveTerm(otherId);
+              if (other && !other.disposed && other.ptyId) {
+                void ptyWrite(other.ptyId, data);
+              }
+            }
+          }
         });
         live.sessionCleanups.push(() => dataDisp.dispose());
       } catch (e) {

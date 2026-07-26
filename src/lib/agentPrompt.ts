@@ -24,6 +24,8 @@ export const AGENT_BASE_PROMPT = `
 3. 装软件：探测 → 安装 → 再探测 → 中文总结。
 4. 安全：破坏性命令先警告。
 5. CLI 交互提示：用 Actions skill 给一键按钮。
+6. 读输出优先 read_pane blocks=true（结构化命令块：命令/退出码/耗时，省 token 且可只看失败块 failed_only=true）；窗格无块结构时退回普通 read_pane。
+7. 多步骤工作（部署、排查、装环境）→ 先 task_create 规划，再逐步 run_command(wait_for_exit=true) 执行，按真实退出码 task_update_step 推进；任务面板对用户可见。
 `.trim();
 
 export { formatAgentSkillsPrompt } from "./agentSkills";
