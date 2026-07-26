@@ -413,7 +413,7 @@ export async function executeAgentTool(
   const settings = useSettingsStore.getState();
 
   // ── 1.0 统一审批入口：内置工具 / run_command / MCP 全走这里 ──
-  const { resolveApproval, addRule } = await import("./approval");
+  const { resolveApproval, addRule, escapeGlob } = await import("./approval");
   const { askApproval } = await import("../components/AppDialog");
   const isMcp = name.startsWith("mcp__");
   const mcpServer = isMcp ? name.split("__")[1] : undefined;
@@ -447,7 +447,9 @@ export async function executeAgentTool(
     }
     if (ans === "always") {
       if (name === "run_command" && approvalCmd) {
-        addRule({ scope: "command-pattern", key: approvalCmd.trim(), decision: "allow" });
+        // Escape glob metachars so "总是允许 X" matches command X *exactly* —
+        // a benign command containing * / ? must not widen into a wildcard rule.
+        addRule({ scope: "command-pattern", key: escapeGlob(approvalCmd.trim()), decision: "allow" });
       } else if (isMcp && mcpServer) {
         addRule({ scope: "mcp-server", key: mcpServer, decision: "allow" });
       } else {
@@ -989,11 +991,11 @@ export async function executeAgentTool(
       notes.push(`不透明度=${n}%`);
     }
     if (args.exec_mode != null || args.execMode != null) {
-      const m = String(args.exec_mode ?? args.execMode);
-      if (["insert", "confirm", "auto"].includes(m)) {
-        patch.execMode = m;
-        notes.push(`执行方式=${m}`);
-      }
+      // Security: the execution policy is a user-controlled safety gate. The
+      // agent must NOT be able to loosen it (e.g. flip to "auto") without the
+      // user — app_settings is auto-allowed under the balanced preset, so
+      // honoring this here would let the model disable its own approval step.
+      notes.push("执行方式仅用户可在设置中修改，已忽略");
     }
     if (args.font_size != null || args.fontSize != null) {
       const n = Math.min(20, Math.max(11, Number(args.font_size ?? args.fontSize)));

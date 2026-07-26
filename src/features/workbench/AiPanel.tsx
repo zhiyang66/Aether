@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useWorkbenchStore } from "../../store/workbenchStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { buildContextBundle, localAgentReply } from "../../lib/agentLocal";
+import { redactAndTrimContext } from "../../lib/contextRedact";
 import { agentChat, agentChatCancel, agentModelsList } from "../../ipc/pty";
 import { runAgentToolLoop } from "../../lib/agentToolLoop";
 import { isTauri } from "../../lib/window";
@@ -52,7 +53,9 @@ export function AiPanel() {
   const aiModels = useWorkbenchStore((s) => s.aiModels);
   const aiModelsStatus = useWorkbenchStore((s) => s.aiModelsStatus);
   const setAiModels = useWorkbenchStore((s) => s.setAiModels);
-  const pane = useWorkbenchStore((s) => s.activePane());
+  // Only the serial is rendered; select the primitive so the panel doesn't
+  // re-render on every cwd/draft mutation of the focused pane's leaf object.
+  const paneSerial = useWorkbenchStore((s) => s.activePane()?.serial ?? null);
   const session = useWorkbenchStore((s) => s.getActiveAgentSession());
   const agentSessions = useWorkbenchStore((s) => s.agentSessions);
   const appendAgentMessage = useWorkbenchStore((s) => s.appendAgentMessage);
@@ -135,14 +138,16 @@ export function AiPanel() {
     const onDown = (ev: PointerEvent) => {
       ev.preventDefault();
       startX = ev.clientX;
-      startW = aiWidth;
+      // Read the current width at drag start rather than closing over aiWidth,
+      // so this effect doesn't re-register listeners on every width change.
+      startW = useWorkbenchStore.getState().aiWidth;
       el.classList.add("dragging");
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     };
     el.addEventListener("pointerdown", onDown);
     return () => el.removeEventListener("pointerdown", onDown);
-  }, [aiWidth, setAiWidth]);
+  }, [setAiWidth]);
 
   const cleanupStream = () => {
     if (unlistenRef.current) {
@@ -483,7 +488,8 @@ export function AiPanel() {
               { cwd },
             );
             if (hit) {
-              projectCtx = `## 项目上下文（${hit[0]}）\n${hit[1]}`;
+              // AETHER.md can contain secrets — redact like all other context.
+              projectCtx = `## 项目上下文（${hit[0]}）\n${redactAndTrimContext(hit[1], 4000)}`;
             }
           }
         } catch {
@@ -799,7 +805,7 @@ export function AiPanel() {
           "",
           "```",
           blockHeader(block),
-          ...(out ? [out.slice(-4000)] : ["（输出已不在缓冲区）"]),
+          ...(out ? [redactAndTrimContext(out, 4000)] : ["（输出已不在缓冲区）"]),
           "```",
         ].join("\n");
         void sendWithTextRef.current?.(prompt);
@@ -965,7 +971,7 @@ export function AiPanel() {
             </svg>
           </button>
           <span className="ai-header-focus" id="ai-focus-label">
-            焦点 · 窗格 #{pane?.serial ?? "—"}
+            焦点 · 窗格 #{paneSerial ?? "—"}
           </span>
         </div>
       </div>

@@ -1,8 +1,9 @@
 //! Shell integration (OSC 133 command marks + OSC 7 cwd).
 //!
-//! Injection is done at spawn time (args / env), never by typing into the
-//! PTY — the user sees nothing. Scripts are (re)written to a temp dir on
-//! demand and source the user's own rc first, so user config keeps working.
+//! Integration is enabled via spawn-time args / env, never by typing into
+//! the PTY — so it doesn't disturb the user's input line. Scripts are
+//! (re)written to a temp dir on demand and source the user's own rc first,
+//! so user config keeps working.
 //!
 //! Marks: A = prompt start, B = prompt end / input start, C = pre-exec,
 //! D;<exit> = command finished. cmd / WSL are unsupported → returns None

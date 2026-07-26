@@ -131,10 +131,32 @@ export function removeRule(scope: ApprovalScope, key: string) {
   saveApproval(s);
 }
 
-/** Glob → RegExp: `*` any run, `?` one char; everything else literal. */
+/**
+ * Glob → RegExp: `*` any run, `?` one char; everything else literal.
+ * A backslash escapes the following char, so `\*` / `\?` match a literal
+ * `*` / `?` — this lets escapeGlob() produce exact-match patterns.
+ */
 export function globToRegex(glob: string): RegExp {
-  const esc = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`^${esc.replace(/\*/g, ".*").replace(/\?/g, ".")}$`, "i");
+  const escLiteral = (ch: string) => ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let out = "";
+  for (let i = 0; i < glob.length; i++) {
+    const ch = glob[i];
+    if (ch === "\\" && i + 1 < glob.length) {
+      out += escLiteral(glob[++i]);
+    } else if (ch === "*") {
+      out += ".*";
+    } else if (ch === "?") {
+      out += ".";
+    } else {
+      out += escLiteral(ch);
+    }
+  }
+  return new RegExp(`^${out}$`, "i");
+}
+
+/** Escape glob metacharacters so a string matches literally (exact match). */
+export function escapeGlob(s: string): string {
+  return s.replace(/[\\*?]/g, "\\$&");
 }
 
 export type ApprovalRequest = {

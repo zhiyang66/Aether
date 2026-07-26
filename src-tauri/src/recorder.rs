@@ -7,7 +7,12 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
+
+/// Number of active recordings. Lets the hot PTY-output path skip the global
+/// lock + JSON allocation entirely in the common case (nothing recording).
+static ACTIVE: AtomicUsize = AtomicUsize::new(0);
 
 struct Recording {
     file: BufWriter<File>,
@@ -48,7 +53,7 @@ pub fn start(pty_id: &str, path: &str, cols: u16, rows: u16) -> Result<(), Strin
     let mut w = BufWriter::new(file);
     writeln!(w, "{}", header(cols, rows)).map_err(|e| e.to_string())?;
     with_map(|map| {
-        map.insert(
+        let prev = map.insert(
             pty_id.to_string(),
             Recording {
                 file: w,
@@ -56,6 +61,9 @@ pub fn start(pty_id: &str, path: &str, cols: u16, rows: u16) -> Result<(), Strin
                 path: path.to_string(),
             },
         );
+        if prev.is_none() {
+            ACTIVE.fetch_add(1, Ordering::Relaxed);
+        }
     });
     Ok(())
 }
@@ -64,6 +72,7 @@ pub fn start(pty_id: &str, path: &str, cols: u16, rows: u16) -> Result<(), Strin
 pub fn stop(pty_id: &str) -> Option<String> {
     with_map(|map| {
         map.remove(pty_id).map(|mut r| {
+            ACTIVE.fetch_sub(1, Ordering::Relaxed);
             let _ = r.file.flush();
             r.path
         })
@@ -76,6 +85,9 @@ pub fn is_recording(pty_id: &str) -> bool {
 
 /// Called from the PTY reader thread for every output chunk. No-op when idle.
 pub fn record_output(pty_id: &str, data: &[u8]) {
+    if ACTIVE.load(Ordering::Relaxed) == 0 {
+        return;
+    }
     with_map(|map| {
         if let Some(r) = map.get_mut(pty_id) {
             let t = r.started.elapsed().as_secs_f64();
@@ -88,6 +100,9 @@ pub fn record_output(pty_id: &str, data: &[u8]) {
 
 /// Resize events keep playback geometry honest.
 pub fn record_resize(pty_id: &str, cols: u16, rows: u16) {
+    if ACTIVE.load(Ordering::Relaxed) == 0 {
+        return;
+    }
     with_map(|map| {
         if let Some(r) = map.get_mut(pty_id) {
             let t = r.started.elapsed().as_secs_f64();

@@ -21,6 +21,16 @@ export type SshHost = {
 
 export const SSH_HOSTS_KEY = "sw-ssh-hosts-v1";
 
+/**
+ * A value that becomes an ssh argv token must not be parsed as an option.
+ * `ssh` treats any token starting with `-` as a flag (e.g. `-oProxyCommand=…`
+ * → arbitrary local command execution), so reject leading-dash values.
+ */
+export function isSafeSshValue(v: string | undefined | null): boolean {
+  if (v == null || v === "") return true;
+  return !v.trim().startsWith("-");
+}
+
 const listeners = new Set<() => void>();
 
 export function onSshHostsChanged(l: () => void): () => void {
@@ -50,7 +60,11 @@ export function loadSshHosts(): SshHost[] {
             typeof h.id === "string" &&
             typeof h.name === "string" &&
             typeof h.host === "string" &&
-            h.host.trim(),
+            h.host.trim() &&
+            isSafeSshValue(h.host) &&
+            isSafeSshValue(h.user) &&
+            isSafeSshValue(h.identityFile) &&
+            isSafeSshValue(h.jumpHost),
         )
       : [];
   } catch {
@@ -82,14 +96,19 @@ export function newSshHostId(): string {
 /** Assemble ssh CLI args for a host (target last). */
 export function buildSshArgs(h: SshHost): string[] {
   const args: string[] = [];
-  if (h.port && h.port !== 22) args.push("-p", String(h.port));
-  if (h.identityFile?.trim()) args.push("-i", h.identityFile.trim());
-  if (h.jumpHost?.trim()) args.push("-J", h.jumpHost.trim());
+  if (h.port && h.port > 0 && h.port < 65536 && h.port !== 22) args.push("-p", String(h.port));
+  if (h.identityFile?.trim() && isSafeSshValue(h.identityFile)) {
+    args.push("-i", h.identityFile.trim());
+  }
+  if (h.jumpHost?.trim() && isSafeSshValue(h.jumpHost)) args.push("-J", h.jumpHost.trim());
   for (const a of h.extraArgs ?? []) {
     if (a.trim()) args.push(a.trim());
   }
-  const target = h.user?.trim() ? `${h.user.trim()}@${h.host.trim()}` : h.host.trim();
-  args.push(target);
+  const user = h.user?.trim();
+  const host = h.host.trim();
+  const target = user && isSafeSshValue(user) ? `${user}@${host}` : host;
+  // `--` terminates option parsing so a host/user can never be read as a flag.
+  args.push("--", target);
   return args;
 }
 
@@ -134,10 +153,17 @@ export function parseSshConfig(text: string): Omit<SshHost, "id">[] {
     else if (key === "user") cur.user = val;
     else if (key === "port") {
       const p = Number(val);
-      if (Number.isFinite(p)) cur.port = p;
+      if (Number.isFinite(p) && p > 0 && p < 65536) cur.port = p;
     } else if (key === "identityfile") cur.identityFile = val.replace(/^"|"$/g, "");
     else if (key === "proxyjump") cur.jumpHost = val;
   }
   if (cur && cur.host) out.push(cur);
-  return out;
+  // Never import entries whose fields would be parsed as ssh options.
+  return out.filter(
+    (h) =>
+      isSafeSshValue(h.host) &&
+      isSafeSshValue(h.user) &&
+      isSafeSshValue(h.identityFile) &&
+      isSafeSshValue(h.jumpHost),
+  );
 }

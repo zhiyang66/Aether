@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   addRule,
   APPROVAL_KEY,
+  escapeGlob,
   globToRegex,
   loadApproval,
   removeRule,
@@ -133,5 +134,23 @@ describe("globToRegex", () => {
     expect(globToRegex("a?c").test("abc")).toBe(true);
     expect(globToRegex("1+1").test("1+1")).toBe(true);
     expect(globToRegex("1+1").test("111")).toBe(false);
+  });
+
+  it("escaped wildcards match literally", () => {
+    expect(globToRegex("rm \\*.log").test("rm *.log")).toBe(true);
+    expect(globToRegex("rm \\*.log").test("rm -rf /etc/x.log")).toBe(false);
+  });
+});
+
+describe("escapeGlob prevents auto-rule widening", () => {
+  it("an 'always allow' of a * command does not become a wildcard", () => {
+    // Simulates agentToolLoop persisting an approved command as an exact rule.
+    const key = escapeGlob("rm *.log");
+    const s = store({ preset: "balanced", rules: [{ scope: "command-pattern", key, decision: "allow" }] });
+    expect(resolveApproval({ tool: "run_command", command: "rm *.log" }, s).decision).toBe("allow");
+    // The wildcard must NOT let a dangerous recursive rm slip through.
+    expect(
+      resolveApproval({ tool: "run_command", command: "rm -rf /etc/x.log" }, s).decision,
+    ).toBe("ask");
   });
 });

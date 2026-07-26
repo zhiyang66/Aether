@@ -80,19 +80,25 @@ fn read_ssh_config() -> String {
     .unwrap_or_default()
 }
 
+/// The single directory Aether reads/writes session recordings under.
+fn recordings_dir() -> Result<std::path::PathBuf, String> {
+  Ok(dirs::home_dir().ok_or("无法定位用户目录")?.join("aether-recordings"))
+}
+
 /// Start recording a PTY session to an asciinema cast v2 file.
 /// Returns the file path (auto-generated under ~/aether-recordings).
 #[tauri::command]
 fn pty_record_start(id: String, cols: Option<u16>, rows: Option<u16>) -> Result<String, String> {
-  let dir = dirs::home_dir()
-    .ok_or("无法定位用户目录")?
-    .join("aether-recordings");
+  let dir = recordings_dir()?;
   std::fs::create_dir_all(&dir).map_err(|e| format!("创建录像目录失败: {e}"))?;
   let stamp = std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)
     .map(|d| d.as_secs())
     .unwrap_or(0);
-  let path = dir.join(format!("aether-{stamp}.cast"));
+  // Include the PTY id so two recordings started in the same second can't
+  // collide onto one file (which would interleave/corrupt both casts).
+  let safe_id: String = id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+  let path = dir.join(format!("aether-{stamp}-{safe_id}.cast"));
   let p = path.to_string_lossy().to_string();
   recorder::start(&id, &p, cols.unwrap_or(80), rows.unwrap_or(24))?;
   Ok(p)
@@ -109,15 +115,30 @@ fn pty_record_status(id: String) -> bool {
   recorder::is_recording(&id)
 }
 
-/// Read a .cast file for playback (size-capped).
+/// Read a .cast file for playback (size-capped, confined to the recordings dir).
 #[tauri::command]
 fn read_cast_file(path: String) -> Result<String, String> {
   const MAX: u64 = 8 * 1024 * 1024;
-  let meta = std::fs::metadata(&path).map_err(|e| format!("读取失败: {e}"))?;
+  // Confine to ~/aether-recordings: canonicalize both sides so `..`, symlinks
+  // and absolute paths can't turn this into an arbitrary-file-read primitive
+  // (e.g. reading ~/.ssh/id_rsa or .env through the IPC bridge).
+  let dir = recordings_dir()?
+    .canonicalize()
+    .map_err(|e| format!("录像目录不可用: {e}"))?;
+  let requested = std::path::Path::new(&path)
+    .canonicalize()
+    .map_err(|e| format!("读取失败: {e}"))?;
+  if !requested.starts_with(&dir) {
+    return Err("拒绝：只能读取录像目录内的文件".into());
+  }
+  if requested.extension().and_then(|e| e.to_str()) != Some("cast") {
+    return Err("拒绝：只能读取 .cast 录像文件".into());
+  }
+  let meta = std::fs::metadata(&requested).map_err(|e| format!("读取失败: {e}"))?;
   if meta.len() > MAX {
     return Err(format!("录像过大（{} MB > 8 MB）", meta.len() / 1024 / 1024));
   }
-  std::fs::read_to_string(&path).map_err(|e| format!("读取失败: {e}"))
+  std::fs::read_to_string(&requested).map_err(|e| format!("读取失败: {e}"))
 }
 
 /// 1.0 项目级上下文：从 cwd 向上查找 AETHER.md（到 git root 为止）。

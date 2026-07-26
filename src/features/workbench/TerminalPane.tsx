@@ -9,6 +9,7 @@ import {
   recordCommand,
 } from "../../lib/commandHistory";
 import { isTauri } from "../../lib/window";
+import { escapeHtml } from "../../lib/sanitize";
 import { getLiveTerm } from "../terminal/termRegistry";
 import { XtermHost } from "../terminal/XtermHost";
 import {
@@ -662,12 +663,14 @@ function LeafView({
 }
 
 function formatPrompt(pane: LeafPane): string {
-  // match prototype colored segments roughly
+  // match prototype colored segments roughly. cwd is derived from untrusted
+  // OSC 7 / OSC 9;9 terminal output → escape before interpolating into HTML.
+  const cwd = escapeHtml(pane.cwd);
   if (pane.shellKey === "ps") {
-    return `<span class="prompt-path">PS ${pane.cwd}</span><span class="prompt-sep">&gt; </span>`;
+    return `<span class="prompt-path">PS ${cwd}</span><span class="prompt-sep">&gt; </span>`;
   }
   if (pane.shellKey === "cmd") {
-    return `<span class="prompt-path">${pane.cwd}</span><span class="prompt-sep">&gt;</span>`;
+    return `<span class="prompt-path">${cwd}</span><span class="prompt-sep">&gt;</span>`;
   }
   if (pane.shellKey === "zsh") {
     return `<span class="prompt-path">dev@mac</span><span class="prompt-sep"> </span><span style="color:oklch(0.72 0.1 250)">~</span><span class="prompt-sep"> % </span>`;

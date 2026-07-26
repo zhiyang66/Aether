@@ -3,15 +3,7 @@
  * Handles: paragraphs, bold, italic, inline code, fenced code, lists, links, headings.
  */
 
-import { sanitizeAgentHtml } from "./sanitize";
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+import { escapeHtml, sanitizeAgentHtml } from "./sanitize";
 
 function inlineFormat(s: string): string {
   let t = escapeHtml(s);

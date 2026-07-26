@@ -241,3 +241,22 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 }));
 
 export { platformLabel };
+
+/** Fields that must never leave the machine in an exported settings file. */
+const SECRET_SETTING_KEYS = ["aiApiKey"] as const;
+
+/**
+ * Serialize persisted settings for export with all secret fields removed.
+ * Both the Settings page and the command palette export through this so a
+ * shared settings JSON can never leak the API key.
+ */
+export function exportSettingsJson(): string {
+  let obj: Record<string, unknown> = {};
+  try {
+    obj = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+  } catch {
+    obj = {};
+  }
+  for (const k of SECRET_SETTING_KEYS) delete obj[k];
+  return JSON.stringify(obj, null, 2);
+}

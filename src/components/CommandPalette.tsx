@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorkbenchStore } from "../store/workbenchStore";
-import { useSettingsStore } from "../store/settingsStore";
+import { useSettingsStore, exportSettingsJson } from "../store/settingsStore";
 import { shellMeta, collectLeaves } from "../lib/layout";
 import { allExtensionCommands, ensureExampleExtension } from "../lib/extensions";
 import { askConfirm, askPrompt } from "./AppDialog";
@@ -78,6 +78,8 @@ export function CommandPalette({
   const insertToPane = useWorkbenchStore((s) => s.insertToPane);
 
   const items: Item[] = useMemo(() => {
+    // Closed palette needs no items; skip the localStorage reads + layout walk.
+    if (!open) return [];
     const list: Item[] = [
       {
         id: "ai-focus",
@@ -366,13 +368,12 @@ export function CommandPalette({
       id: "export-settings",
       label: "导出设置 JSON",
       run: () => {
-        const data = localStorage.getItem("sw-settings-v1") || "{}";
-        const blob = new Blob([data], { type: "application/json" });
+        const blob = new Blob([exportSettingsJson()], { type: "application/json" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
         a.download = "shell-workbench-settings.json";
         a.click();
-        toastMsg("已导出设置");
+        toastMsg("已导出设置（已移除密钥字段）");
       },
     });
 
@@ -390,6 +391,7 @@ export function CommandPalette({
 
     return list;
   }, [
+    open,
     aiOpen,
     tabs,
     addPane,

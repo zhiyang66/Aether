@@ -19,11 +19,11 @@ const host = (over: Partial<SshHost> = {}): SshHost => ({
 });
 
 describe("buildSshArgs", () => {
-  it("bare host → single target arg", () => {
-    expect(buildSshArgs(host())).toEqual(["10.0.0.5"]);
+  it("bare host → target after -- terminator", () => {
+    expect(buildSshArgs(host())).toEqual(["--", "10.0.0.5"]);
   });
 
-  it("assembles port / identity / jump / extra args, target last", () => {
+  it("assembles port / identity / jump / extra args, target last after --", () => {
     const args = buildSshArgs(
       host({
         port: 2222,
@@ -42,12 +42,24 @@ describe("buildSshArgs", () => {
       "user@bastion",
       "-o",
       "ServerAliveInterval=30",
+      "--",
       "deploy@10.0.0.5",
     ]);
   });
 
   it("default port 22 omitted", () => {
-    expect(buildSshArgs(host({ port: 22 }))).toEqual(["10.0.0.5"]);
+    expect(buildSshArgs(host({ port: 22 }))).toEqual(["--", "10.0.0.5"]);
+  });
+
+  it("rejects option-injection via host / user (leading dash)", () => {
+    // A malicious host is not treated as an ssh flag: the `--` terminator
+    // and the leading-dash guard both defend against -oProxyCommand=… RCE.
+    const args = buildSshArgs(host({ host: "-oProxyCommand=calc.exe" }));
+    expect(args[args.length - 2]).toBe("--");
+    expect(args[args.length - 1]).toBe("-oProxyCommand=calc.exe");
+    // user with leading dash is dropped rather than forming -x@host
+    const args2 = buildSshArgs(host({ user: "-oProxyCommand=x", host: "h" }));
+    expect(args2).toEqual(["--", "h"]);
   });
 });
 
@@ -95,6 +107,6 @@ describe("sshProfiles", () => {
     expect(profiles[0].id).toBe("ssh:h1");
     expect(profiles[0].shellKey).toBe("ssh:prod");
     expect(profiles[0].path).toBe("ssh");
-    expect(profiles[0].args).toEqual(["root@10.0.0.5"]);
+    expect(profiles[0].args).toEqual(["--", "root@10.0.0.5"]);
   });
 });

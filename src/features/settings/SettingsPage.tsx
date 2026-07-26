@@ -2,7 +2,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { WinControls } from "../../components/WinControls";
 import { Toast } from "../../components/Toast";
-import { useSettingsStore, platformLabel } from "../../store/settingsStore";
+import { useSettingsStore, platformLabel, exportSettingsJson } from "../../store/settingsStore";
 import { useWorkbenchStore } from "../../store/workbenchStore";
 import { useShellCatalogStore } from "../../store/shellCatalogStore";
 import { clearHistory } from "../../lib/commandHistory";
@@ -1005,13 +1005,12 @@ export function SettingsPage() {
             className="btn"
             type="button"
             onClick={() => {
-              const data = localStorage.getItem("sw-settings-v1") || "{}";
-              const blob = new Blob([data], { type: "application/json" });
+              const blob = new Blob([exportSettingsJson()], { type: "application/json" });
               const a = document.createElement("a");
               a.href = URL.createObjectURL(blob);
               a.download = "shell-workbench-settings.json";
               a.click();
-              toastMsg("已导出设置（不含密钥字段请自查）");
+              toastMsg("已导出设置（已移除密钥字段）");
             }}
           >
             导出配置

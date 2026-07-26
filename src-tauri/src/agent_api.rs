@@ -3,8 +3,18 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tauri::{AppHandle, Emitter};
+
+/// One shared HTTP client so multi-round agent loops reuse pooled TCP/TLS
+/// connections instead of paying a fresh handshake per round. Per-call timeouts
+/// are set on each RequestBuilder; this default is only a backstop.
+static HTTP: LazyLock<reqwest::Client> = LazyLock::new(|| {
+  reqwest::Client::builder()
+    .timeout(std::time::Duration::from_secs(180))
+    .build()
+    .expect("failed to build reqwest client")
+});
 
 /// Active chat streams that can be cancelled from the UI (Stop button).
 static STREAM_CANCEL: Mutex<Option<HashMap<String, Arc<AtomicBool>>>> = Mutex::new(None);
@@ -160,13 +170,9 @@ pub async fn list_models(req: ModelsListRequest) -> Result<Vec<ModelInfo>, Strin
   } else {
     models_url(&req.endpoint)
   };
-  let client = reqwest::Client::builder()
-    .timeout(std::time::Duration::from_secs(30))
-    .build()
-    .map_err(|e| e.to_string())?;
-
-  let mut b = client
+  let mut b = HTTP
     .get(&url)
+    .timeout(std::time::Duration::from_secs(30))
     .header("Accept", "application/json")
     .header("User-Agent", "Aether/0.7");
 
@@ -497,10 +503,6 @@ async fn chat_stream_inner(
   cancel: Arc<AtomicBool>,
 ) -> Result<(), String> {
   let url = chat_url(&req.endpoint);
-  let client = reqwest::Client::builder()
-    .timeout(std::time::Duration::from_secs(120))
-    .build()
-    .map_err(|e| e.to_string())?;
 
   // Stream first (OpenAI-compatible)
   let body = serde_json::json!({
@@ -508,8 +510,9 @@ async fn chat_stream_inner(
     "messages": req.messages,
     "stream": true,
   });
-  let mut b = client
+  let mut b = HTTP
     .post(&url)
+    .timeout(std::time::Duration::from_secs(120))
     .header("Content-Type", "application/json")
     .header("Accept", "text/event-stream, application/json")
     .header("User-Agent", "Aether/0.6")
@@ -594,9 +597,14 @@ async fn chat_stream_inner(
     buffer.push_str(&piece);
     // keep a short raw tail for diagnostics
     raw_tail.push_str(&piece);
-    if raw_tail.len() > 800 {
-      let start = raw_tail.len().saturating_sub(800);
-      raw_tail = raw_tail[start..].to_string();
+    if raw_tail.len() > 3200 {
+      // Diagnostics-only tail: trim by bytes (walk up to a char boundary so we
+      // never slice mid-codepoint) instead of counting/collecting chars twice.
+      let mut cut = raw_tail.len() - 3200;
+      while cut < raw_tail.len() && !raw_tail.is_char_boundary(cut) {
+        cut += 1;
+      }
+      raw_tail.drain(..cut);
     }
 
     while let Some(pos) = buffer.find('\n') {
@@ -604,7 +612,9 @@ async fn chat_stream_inner(
         return Ok(());
       }
       let line = buffer[..pos].trim_end_matches('\r').to_string();
-      buffer = buffer[pos + 1..].to_string();
+      // drain the consumed prefix in place — avoids re-allocating the whole
+      // remaining buffer per line (was O(n²) on large multi-line chunks).
+      buffer.drain(..=pos);
       if process_stream_line(
         &app,
         &req.stream_id,
@@ -633,7 +643,7 @@ async fn chat_stream_inner(
 
   // Stream ended with no parseable text → non-stream fallback (many proxies mishandle SSE)
   if !got_any && !cancel.load(Ordering::SeqCst) {
-    if let Ok(Some(text)) = chat_non_stream(&client, &url, req).await {
+    if let Ok(Some(text)) = chat_non_stream(&HTTP, &url, req).await {
       if !text.is_empty() {
         emit_delta(&app, &req.stream_id, &text);
         got_any = true;
@@ -675,6 +685,7 @@ async fn chat_non_stream(
   });
   let mut b = client
     .post(url)
+    .timeout(std::time::Duration::from_secs(120))
     .header("Content-Type", "application/json")
     .header("Accept", "application/json")
     .header("User-Agent", "Aether/0.6")
@@ -747,10 +758,6 @@ async fn read_body_text(res: reqwest::Response) -> Result<(reqwest::StatusCode, 
 
 pub async fn chat_with_tools(req: ToolChatRequest) -> Result<ToolChatResponse, String> {
   let url = chat_url(&req.endpoint);
-  let client = reqwest::Client::builder()
-    .timeout(std::time::Duration::from_secs(120))
-    .build()
-    .map_err(|e| e.to_string())?;
 
   let mut body = serde_json::json!({
     "model": req.model,
@@ -770,8 +777,9 @@ pub async fn chat_with_tools(req: ToolChatRequest) -> Result<ToolChatResponse, S
     }
   }
 
-  let mut b = client
+  let mut b = HTTP
     .post(&url)
+    .timeout(std::time::Duration::from_secs(120))
     .header("Content-Type", "application/json")
     .header("Accept", "application/json")
     .header("User-Agent", "Aether/0.6")
@@ -1076,10 +1084,6 @@ async fn openai_stream_round(
   cancel: Arc<AtomicBool>,
 ) -> Result<ToolChatResponse, String> {
   let url = chat_url(&req.endpoint);
-  let client = reqwest::Client::builder()
-    .timeout(std::time::Duration::from_secs(180))
-    .build()
-    .map_err(|e| e.to_string())?;
 
   let use_tools = req
     .tools
@@ -1113,8 +1117,9 @@ async fn openai_stream_round(
   };
 
   let send = |body: serde_json::Value| {
-    let mut b = client
+    let mut b = HTTP
       .post(&url)
+      .timeout(std::time::Duration::from_secs(180))
       .header("Content-Type", "application/json")
       .header("Accept", "text/event-stream, application/json")
       .header("User-Agent", "Aether/0.7")
@@ -1226,7 +1231,7 @@ async fn openai_stream_round(
       buffer.push_str(&String::from_utf8_lossy(&chunk));
       while let Some(pos) = buffer.find('\n') {
         let line = buffer[..pos].trim_end_matches('\r').to_string();
-        buffer = buffer[pos + 1..].to_string();
+        buffer.drain(..=pos);
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with(':') {
           continue;
@@ -1523,10 +1528,6 @@ async fn anthropic_stream_round(
   cancel: Arc<AtomicBool>,
 ) -> Result<ToolChatResponse, String> {
   let url = anthropic_messages_url(&req.endpoint);
-  let client = reqwest::Client::builder()
-    .timeout(std::time::Duration::from_secs(180))
-    .build()
-    .map_err(|e| e.to_string())?;
 
   let (system, messages) = openai_msgs_to_anthropic(&req.messages);
   let (max_tokens, thinking_budget) = anthropic_effort_budget(req.effort.as_deref());
@@ -1550,8 +1551,9 @@ async fn anthropic_stream_round(
     body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": budget});
   }
 
-  let mut b = client
+  let mut b = HTTP
     .post(&url)
+    .timeout(std::time::Duration::from_secs(180))
     .header("Content-Type", "application/json")
     .header("Accept", "text/event-stream")
     .header("anthropic-version", "2023-06-01")
@@ -1589,7 +1591,7 @@ async fn anthropic_stream_round(
     buffer.push_str(&String::from_utf8_lossy(&chunk));
     while let Some(pos) = buffer.find('\n') {
       let line = buffer[..pos].trim_end_matches('\r').to_string();
-      buffer = buffer[pos + 1..].to_string();
+      buffer.drain(..=pos);
       let trimmed = line.trim();
       let Some(data) = trimmed.strip_prefix("data:").map(|s| s.trim()) else {
         continue;

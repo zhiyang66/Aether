@@ -358,6 +358,10 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
         let liveId: string | null = null;
         const earlyChunks: { id: string; data: number[] | Uint8Array }[] = [];
         let cwdProbe = "";
+        // One decoder per session (not per chunk): avoids per-chunk allocation
+        // and, with {stream:true}, correctly joins multibyte chars split across
+        // PTY chunks instead of emitting replacement characters.
+        const decoder = new TextDecoder();
 
         const ingest = (ev: { id: string; data: number[] | Uint8Array }) => {
           if (live.disposed) return;
@@ -369,7 +373,7 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
           const bytes = ev.data instanceof Uint8Array ? ev.data : new Uint8Array(ev.data);
           term.write(bytes);
           try {
-            const text = new TextDecoder().decode(bytes);
+            const text = decoder.decode(bytes, { stream: true });
             cwdProbe = (cwdProbe + text).slice(-4000);
             const cwdHit = detectCwdFromOutput(cwdProbe);
             if (cwdHit) setPaneCwd(paneId, cwdHit);
