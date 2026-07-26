@@ -1,3 +1,4 @@
+mod aether;
 mod agent_api;
 mod mcp_host;
 mod pty_host;
@@ -246,7 +247,13 @@ pub fn run() {
       mcp_host::mcp_connect,
       mcp_host::mcp_disconnect,
       mcp_host::mcp_status,
-      mcp_host::mcp_call_tool
+      mcp_host::mcp_call_tool,
+      aether::skills_list,
+      aether::skills_dir_path,
+      aether::skill_write,
+      aether::skill_delete,
+      aether::aether_config_read,
+      aether::aether_config_write
     ])
     .on_window_event(|_, event| {
       if let tauri::WindowEvent::Destroyed = event {

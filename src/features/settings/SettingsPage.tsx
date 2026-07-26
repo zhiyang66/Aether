@@ -14,6 +14,7 @@ import { SnippetsPanel } from "./SnippetsPanel";
 import { ApprovalPanel } from "./ApprovalPanel";
 import { McpPanel } from "./McpPanel";
 import { HostsPanel } from "./HostsPanel";
+import { SkillsPanel } from "./SkillsPanel";
 import { checkForUpdate } from "../../lib/updateCheck";
 import { askConfirm } from "../../components/AppDialog";
 import logoUrl from "../../assets/logo.png";
@@ -32,6 +33,7 @@ type PanelId =
   | "ai"
   | "approval"
   | "mcp"
+  | "skills"
   | "extensions"
   | "completion"
   | "snippets"
@@ -47,6 +49,7 @@ const NAV: { id: PanelId; label: string; group: string }[] = [
   { id: "ai", label: "Agent", group: "智能" },
   { id: "approval", label: "审批", group: "智能" },
   { id: "mcp", label: "MCP", group: "智能" },
+  { id: "skills", label: "Skill", group: "智能" },
   { id: "extensions", label: "扩展", group: "智能" },
   { id: "completion", label: "命令联想", group: "输入" },
   { id: "snippets", label: "命令片段", group: "输入" },
@@ -260,7 +263,7 @@ export function SettingsPage() {
                       onChange={(v) => s.patch({ confirmMultiTabClose: v })}
                     />
                   </Row>
-                  <Row label="复制时包含提示符" desc="选中终端文本是否带 prompt">
+                  <Row label="复制命令块输出时包含命令行" desc="点命令块「复制输出」时是否保留首行命令">
                     <Switch checked={s.copyWithPrompt} onChange={(v) => s.patch({ copyWithPrompt: v })} />
                   </Row>
                 </div>
@@ -526,6 +529,19 @@ export function SettingsPage() {
                 </p>
               </div>
               <McpPanel />
+            </section>
+          )}
+
+          {panel === "skills" && (
+            <section className="panel active">
+              <div className="panel-header">
+                <h1>Skill</h1>
+                <p>
+                  Agent 的内置能力简报——教它何时/如何操作 Aether 的各项功能，
+                  随每次对话自动注入。当前为内置，随发布更新。
+                </p>
+              </div>
+              <SkillsPanel />
             </section>
           )}
 

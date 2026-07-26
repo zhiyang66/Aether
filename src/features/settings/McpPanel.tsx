@@ -116,12 +116,12 @@ export function McpPanel() {
   return (
     <div className="section">
       {!isTauri() && (
-        <div className="card" style={{ color: "var(--muted)", fontSize: 13 }}>
+        <div className="card pad" style={{ color: "var(--muted)", fontSize: 13 }}>
           MCP 需要桌面环境（浏览器预览下不可用）。
         </div>
       )}
       <div className="section-title">已配置（{servers.length}）</div>
-      <div className="card">
+      <div className="card pad">
         {servers.length === 0 && (
           <div style={{ color: "var(--muted)", fontSize: 13 }}>
             暂无 MCP server。连接后其工具自动加入 Agent 工具表（命名空间
@@ -259,7 +259,7 @@ export function McpPanel() {
       <div className="section-title" style={{ marginTop: 16 }}>
         {draft.id ? "编辑 server" : "添加 server"}
       </div>
-      <div className="card" style={{ display: "grid", gap: 8 }}>
+      <div className="card pad" style={{ display: "grid", gap: 8 }}>
         <div style={{ display: "flex", gap: 8 }}>
           <input
             className="ctrl"

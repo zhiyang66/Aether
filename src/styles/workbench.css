@@ -45,13 +45,16 @@
         transform 0.18s,
         box-shadow 0.22s;
     }
+    /* Fill the OS window edge-to-edge (no transparent inset / rounded corners /
+       drop-shadow). The borderless+transparent Tauri window otherwise showed
+       the desktop through the 16px inset and rounded corners. */
     .app.windowed {
-      width: min(1240px, calc(100vw - 32px));
-      height: min(780px, calc(100vh - 32px));
-      margin: 16px auto;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      box-shadow: var(--shadow-panel), 0 0 0 1px oklch(1 0 0 / 0.03);
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      border: none;
+      border-radius: 0;
+      box-shadow: none;
     }
     .app.minimized {
       opacity: 0;

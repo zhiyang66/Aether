@@ -7,18 +7,22 @@ import { AppContextMenu } from "../components/AppContextMenu";
 import { AppDialogHost } from "../components/AppDialog";
 import { useSettingsStore } from "../store/settingsStore";
 import { useShellCatalogStore } from "../store/shellCatalogStore";
+import { refreshSkills } from "../lib/agentSkills";
 import "../styles/tokens.css";
 import "../styles/xterm-bridge.css";
 import "../styles/product.css";
 
 export default function App() {
   const load = useSettingsStore((s) => s.load);
+  const loadFromDisk = useSettingsStore((s) => s.loadFromDisk);
   const scanShells = useShellCatalogStore((s) => s.scan);
 
   useEffect(() => {
-    load();
+    load(); // fast, synchronous localStorage read (avoids blank flash)
+    void loadFromDisk(); // authoritative ~/.aether/config.json overrides
+    void refreshSkills(); // warm the skill cache (picks up user-added skills)
     void scanShells();
-  }, [load, scanShells]);
+  }, [load, loadFromDisk, scanShells]);
 
   return (
     <ErrorBoundary>

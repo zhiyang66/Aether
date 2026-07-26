@@ -31,7 +31,7 @@ export function ApprovalPanel() {
   return (
     <div className="section">
       <div className="section-title">策略预设</div>
-      <div className="card">
+      <div className="card pad">
         {(Object.keys(PRESET_LABELS) as ApprovalPreset[]).map((p) => (
           <label
             key={p}
@@ -63,7 +63,7 @@ export function ApprovalPanel() {
       <div className="section-title" style={{ marginTop: 16 }}>
         规则（{store.rules.length}） · 审批弹窗点「总是允许」也会写入这里
       </div>
-      <div className="card">
+      <div className="card pad">
         {store.rules.length === 0 && (
           <div style={{ color: "var(--muted)", fontSize: 13 }}>
             暂无规则。命令支持通配符：<code>npm *</code> 匹配所有 npm 命令。

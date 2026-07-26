@@ -304,7 +304,7 @@ export const AGENT_TOOLS_OPENAI = [
     function: {
       name: "app_settings",
       description:
-        "调整应用设置：主题、不透明度、Agent 执行模式、字号、上下文范围等。敏感项（API Key）不要用此工具写入。",
+        "调整应用设置（写入 ~/.aether/config.json，以文件为准）：主题、不透明度、Agent 执行模式、字号、上下文范围、AI 提供方/端点/API Key/模型等。可完整操作配置。",
       parameters: {
         type: "object",
         properties: {
@@ -321,6 +321,24 @@ export const AGENT_TOOLS_OPENAI = [
             enum: ["insert", "confirm", "auto"],
             description: "Agent 命令执行方式",
           },
+          ai_api_key: {
+            type: "string",
+            description: "AI API Key（写入 config.json；传空字符串清空）",
+          },
+          ai_endpoint: {
+            type: "string",
+            description: "AI 接口端点 URL",
+          },
+          ai_provider: {
+            type: "string",
+            enum: ["openai-compat", "anthropic", "custom"],
+            description: "AI 提供方",
+          },
+          ai_default_model_id: {
+            type: "string",
+            description: "默认模型 id",
+          },
+          ai_enabled: { type: "boolean", description: "AI 功能总开关" },
           font_size: { type: "integer", description: "终端字号 11–20" },
           context_scope: {
             type: "string",
@@ -330,7 +348,235 @@ export const AGENT_TOOLS_OPENAI = [
             type: "boolean",
             description: "是否打开 Agent 面板",
           },
+          font_family: { type: "string", description: "终端字体族名" },
+          cursor_style: {
+            type: "string",
+            enum: ["bar", "block", "underline"],
+            description: "光标形状",
+          },
+          cursor_blink: { type: "boolean", description: "光标是否闪烁" },
+          accent_hue: { type: "integer", description: "主题强调色相 0–360" },
+          shell_integration: {
+            type: "boolean",
+            description: "Shell 集成（命令块 OSC 133）",
+          },
+          notify_on_long_command: {
+            type: "boolean",
+            description: "长命令完成时系统通知",
+          },
+          notify_threshold_sec: {
+            type: "integer",
+            description: "长命令通知阈值（秒）",
+          },
+          suggest_enabled: { type: "boolean", description: "命令联想开关" },
+          suggest_max: { type: "integer", description: "联想候选上限 3–12" },
+          history_limit: { type: "integer", description: "历史保留条数" },
+          restore_session: { type: "boolean", description: "启动恢复上次会话" },
+          ai_on_start: { type: "boolean", description: "启动即显示 Agent 面板" },
+          confirm_multi_tab_close: {
+            type: "boolean",
+            description: "关多标签窗口时确认",
+          },
+          project_context: {
+            type: "boolean",
+            description: "注入 AETHER.md 项目上下文",
+          },
+          output_snapshot_enabled: {
+            type: "boolean",
+            description: "恢复时回填终端输出快照",
+          },
+          output_snapshot_lines: {
+            type: "integer",
+            description: "输出快照行数",
+          },
+          context_lines: { type: "integer", description: "发给模型的上下文行数" },
+          include_draft: { type: "boolean", description: "上下文包含未提交输入" },
         },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "app_query",
+      description:
+        "只读查询应用当前状态（不修改任何东西）。改设置/加主机前先用它了解现状。",
+      parameters: {
+        type: "object",
+        properties: {
+          domain: {
+            type: "string",
+            enum: [
+              "settings",
+              "mcp",
+              "hosts",
+              "snippets",
+              "approval",
+              "recording",
+              "broadcast",
+              "extensions",
+            ],
+            description: "要查询的领域",
+          },
+        },
+        required: ["domain"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mcp_manage",
+      description:
+        "管理 MCP server：注册/连接/启停/删除。连接后其工具以 mcp__名称__工具 加入工具表。注册 stdio 会启动本地进程（配置即执行），需用户确认。",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: [
+              "add",
+              "connect",
+              "disconnect",
+              "enable",
+              "disable",
+              "delete",
+            ],
+          },
+          name: { type: "string", description: "server 名称（add / 定位用）" },
+          transport: { type: "string", enum: ["stdio", "http"] },
+          command_line: {
+            type: "string",
+            description: "stdio 启动命令行，如 npx -y @modelcontextprotocol/server-filesystem D:\\proj",
+          },
+          url: { type: "string", description: "http transport 的 URL" },
+          env: {
+            type: "string",
+            description: "环境变量，每行 KEY=VALUE（可空）",
+          },
+        },
+        required: ["action"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "hosts_manage",
+      description:
+        "管理 SSH 主机：添加/连接（新标签）/删除。私钥按路径引用、只存本机、不外传。",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["add", "connect", "delete"] },
+          name: { type: "string", description: "主机显示名（定位/新建用）" },
+          host: { type: "string", description: "主机地址 / IP" },
+          port: { type: "integer" },
+          user: { type: "string" },
+          identity_file: { type: "string", description: "私钥路径（可空）" },
+          jump_host: { type: "string", description: "跳板 -J（可空）" },
+        },
+        required: ["action"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "snippet_manage",
+      description:
+        "管理命令片段：新增/运行/删除。运行会把模板参数填好后写入焦点窗格（受命令危险策略约束）。",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["add", "run", "delete"] },
+          name: { type: "string", description: "片段名称（定位/新建用）" },
+          template: {
+            type: "string",
+            description: "命令模板，参数用 {name} 占位（add）",
+          },
+          values: {
+            type: "object",
+            description: "运行时的参数取值 {参数名: 值}（run）",
+            additionalProperties: { type: "string" },
+          },
+          serial: { type: "integer", description: "运行目标窗格（省略=焦点）" },
+        },
+        required: ["action"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "recording",
+      description: "asciinema 录制当前/指定窗格：开始/停止。",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["start", "stop"] },
+          serial: { type: "integer", description: "目标窗格（省略=焦点）" },
+        },
+        required: ["action"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "broadcast",
+      description:
+        "广播输入：把键盘输入同时发到多个窗格。on=开启（指定 serials 或当前标签全部），off=全部关闭。",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["on", "off"] },
+          serials: {
+            type: "array",
+            items: { type: "integer" },
+            description: "on 时的目标窗格序号；省略=当前标签所有窗格",
+          },
+        },
+        required: ["action"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "skill_manage",
+      description:
+        "创建/更新/删除内置 Skill（写入 ~/.aether/skills/<id>/SKILL.md）。用户说「帮我建一个 skill / 记住这个操作流程」时用它。写入后下一轮生效。按 skill-creator 写法：触发条件+步骤+边界。",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["write", "delete"] },
+          id: {
+            type: "string",
+            description: "kebab-case 唯一 id（小写字母/数字/连字符），即目录名",
+          },
+          title: { type: "string", description: "中文短名（write 时建议）" },
+          category: {
+            type: "string",
+            description: "归类：基础/应用/集成/效率/交互/元…（write 时建议）",
+          },
+          summary: {
+            type: "string",
+            description: "一句话简介，用于设置页列表（write 时建议）",
+          },
+          body: {
+            type: "string",
+            description: "Skill 正文（markdown）；write 时必填：触发条件+步骤+边界",
+          },
+        },
+        required: ["action", "id"],
         additionalProperties: false,
       },
     },
@@ -991,11 +1237,11 @@ export async function executeAgentTool(
       notes.push(`不透明度=${n}%`);
     }
     if (args.exec_mode != null || args.execMode != null) {
-      // Security: the execution policy is a user-controlled safety gate. The
-      // agent must NOT be able to loosen it (e.g. flip to "auto") without the
-      // user — app_settings is auto-allowed under the balanced preset, so
-      // honoring this here would let the model disable its own approval step.
-      notes.push("执行方式仅用户可在设置中修改，已忽略");
+      const v = String(args.exec_mode ?? args.execMode);
+      if (["insert", "confirm", "auto"].includes(v)) {
+        patch.execMode = v as "insert" | "confirm" | "auto";
+        notes.push(`执行方式=${v}`);
+      }
     }
     if (args.font_size != null || args.fontSize != null) {
       const n = Math.min(20, Math.max(11, Number(args.font_size ?? args.fontSize)));
@@ -1014,17 +1260,489 @@ export async function executeAgentTool(
       st.setAiOpen(open);
       notes.push(`Agent面板=${open ? "开" : "关"}`);
     }
+    if (args.accent_hue != null || args.accentHue != null) {
+      const n = Math.round(Number(args.accent_hue ?? args.accentHue));
+      if (Number.isFinite(n)) {
+        const hue = ((n % 360) + 360) % 360;
+        patch.accentHue = hue;
+        notes.push(`色相=${hue}`);
+      }
+    }
+    if (args.cursor_style != null || args.cursorStyle != null) {
+      const v = String(args.cursor_style ?? args.cursorStyle);
+      if (["bar", "block", "underline"].includes(v)) {
+        patch.cursorStyle = v as "bar" | "block" | "underline";
+        notes.push(`光标=${v}`);
+      }
+    }
+    // Plain string / boolean / clamped-int fields the agent may safely set.
+    const strFields: Record<string, string> = {
+      font_family: "fontFamily",
+      fontFamily: "fontFamily",
+    };
+    for (const [k, field] of Object.entries(strFields)) {
+      if (args[k] != null && typeof args[k] === "string") {
+        const val = String(args[k]).slice(0, 80);
+        patch[field] = val;
+        notes.push(`${field}=${val}`);
+      }
+    }
+    const boolFields: Record<string, string> = {
+      cursor_blink: "cursorBlink",
+      shell_integration: "shellIntegration",
+      notify_on_long_command: "notifyOnLongCommand",
+      suggest_enabled: "suggestEnabled",
+      restore_session: "restoreSession",
+      ai_on_start: "aiOnStart",
+      confirm_multi_tab_close: "confirmMultiTabClose",
+      project_context: "projectContext",
+      output_snapshot_enabled: "outputSnapshotEnabled",
+      include_draft: "includeDraft",
+    };
+    for (const [k, field] of Object.entries(boolFields)) {
+      if (args[k] != null) {
+        (patch as Record<string, unknown>)[field] = Boolean(args[k]);
+        notes.push(`${field}=${patch[field] ? "开" : "关"}`);
+      }
+    }
+    const intFields: Record<string, { field: string; min: number; max: number }> = {
+      notify_threshold_sec: { field: "notifyThresholdSec", min: 1, max: 3600 },
+      suggest_max: { field: "suggestMax", min: 3, max: 12 },
+      history_limit: { field: "historyLimit", min: 50, max: 10000 },
+      output_snapshot_lines: { field: "outputSnapshotLines", min: 50, max: 5000 },
+      context_lines: { field: "contextLines", min: 10, max: 2000 },
+    };
+    for (const [k, spec] of Object.entries(intFields)) {
+      if (args[k] != null) {
+        const n = Math.min(spec.max, Math.max(spec.min, Math.round(Number(args[k]))));
+        if (Number.isFinite(n)) {
+          (patch as Record<string, unknown>)[spec.field] = n;
+          notes.push(`${spec.field}=${n}`);
+        }
+      }
+    }
+    // AI provider config — the agent may fully operate config.json (per product
+    // owner's explicit choice). Written to ~/.aether/config.json like everything
+    // else; export/share still scrubs the key via exportSettingsJson().
+    if (args.ai_api_key != null || args.aiApiKey != null) {
+      const v = String(args.ai_api_key ?? args.aiApiKey);
+      patch.aiApiKey = v;
+      notes.push(`API Key=${v ? "已更新" : "已清空"}`);
+    }
+    if (args.ai_endpoint != null || args.aiEndpoint != null) {
+      const v = String(args.ai_endpoint ?? args.aiEndpoint).slice(0, 500);
+      patch.aiEndpoint = v;
+      notes.push(`端点=${v || "已清空"}`);
+    }
+    if (args.ai_provider != null || args.aiProvider != null) {
+      const v = String(args.ai_provider ?? args.aiProvider);
+      if (["openai-compat", "anthropic", "custom"].includes(v)) {
+        patch.aiProvider = v as "openai-compat" | "anthropic" | "custom";
+        notes.push(`提供方=${v}`);
+      }
+    }
+    if (args.ai_default_model_id != null || args.aiDefaultModelId != null) {
+      const v = String(args.ai_default_model_id ?? args.aiDefaultModelId).slice(0, 120);
+      patch.aiDefaultModelId = v;
+      notes.push(`默认模型=${v || "已清空"}`);
+    }
+    if (args.ai_enabled != null || args.aiEnabled != null) {
+      patch.aiEnabled = Boolean(args.ai_enabled ?? args.aiEnabled);
+      notes.push(`AI=${patch.aiEnabled ? "开" : "关"}`);
+    }
     if (Object.keys(patch).length) {
       settings.patch(patch as Partial<typeof settings>);
+      settings.applyAccent();
     }
     if (!notes.length) {
       return {
         ok: false,
         result:
-          "未提供可改字段。可用: theme, opacity, exec_mode, font_size, context_scope, ai_open",
+          "未提供可改字段。可用: theme, opacity, font_size, context_scope, ai_open, font_family, cursor_style, cursor_blink, accent_hue, shell_integration, notify_on_long_command, notify_threshold_sec, suggest_enabled, suggest_max, history_limit, restore_session, ai_on_start, confirm_multi_tab_close, project_context, output_snapshot_enabled, output_snapshot_lines, context_lines, include_draft",
       };
     }
     return { ok: true, result: `已更新: ${notes.join(" · ")}` };
+  }
+
+  if (name === "app_query") {
+    const domain = String(args.domain || "");
+    if (domain === "settings") {
+      const s = settings;
+      const view = {
+        themePreset: s.themePreset,
+        accentHue: s.accentHue,
+        uiOpacity: s.uiOpacity,
+        fontFamily: s.fontFamily,
+        fontSize: s.fontSize,
+        cursorStyle: s.cursorStyle,
+        cursorBlink: s.cursorBlink,
+        execMode: s.execMode,
+        confirmDanger: s.confirmDanger,
+        contextScope: s.contextScope,
+        contextLines: s.contextLines,
+        includeDraft: s.includeDraft,
+        shellIntegration: s.shellIntegration,
+        notifyOnLongCommand: s.notifyOnLongCommand,
+        notifyThresholdSec: s.notifyThresholdSec,
+        suggestEnabled: s.suggestEnabled,
+        suggestMax: s.suggestMax,
+        historyLimit: s.historyLimit,
+        restoreSession: s.restoreSession,
+        aiOnStart: s.aiOnStart,
+        aiEnabled: s.aiEnabled,
+        projectContext: s.projectContext,
+        aiProvider: s.aiProvider,
+        aiEndpoint: s.aiEndpoint,
+        aiDefaultModelId: s.aiDefaultModelId,
+        aiApiKey: s.aiApiKey ? "（已设置）" : "（空）",
+        defaultShell: s.defaultShell,
+        outputSnapshotEnabled: s.outputSnapshotEnabled,
+        outputSnapshotLines: s.outputSnapshotLines,
+      };
+      return { ok: true, result: JSON.stringify(view, null, 2) };
+    }
+    if (domain === "mcp") {
+      const { loadMcpServers, getConnectedTools } = await import("./mcp");
+      const rows = loadMcpServers().map((m) => {
+        const t = getConnectedTools(m.id);
+        const target =
+          m.transport === "http" ? m.url : `${m.command} ${(m.args ?? []).join(" ")}`;
+        return `${m.enabled ? "✓启用" : "○停用"} ${m.name} [${m.transport}] ${
+          t ? `已连接·${t.length}工具` : "未连接"
+        } — ${target}`;
+      });
+      return { ok: true, result: rows.length ? rows.join("\n") : "（无 MCP server）" };
+    }
+    if (domain === "hosts") {
+      const { loadSshHosts, buildSshArgs } = await import("./sshHosts");
+      const rows = loadSshHosts().map((h) => `${h.name} — ssh ${buildSshArgs(h).join(" ")}`);
+      return { ok: true, result: rows.length ? rows.join("\n") : "（无 SSH 主机）" };
+    }
+    if (domain === "snippets") {
+      const { loadSnippets } = await import("./snippets");
+      const rows = loadSnippets().map(
+        (sn) => `${sn.name}${sn.shellKeys?.length ? ` [${sn.shellKeys.join("/")}]` : ""} — ${sn.template}`,
+      );
+      return { ok: true, result: rows.length ? rows.join("\n") : "（无片段）" };
+    }
+    if (domain === "approval") {
+      const { loadApproval, PRESET_LABELS } = await import("./approval");
+      const a = loadApproval();
+      const rules = a.rules.map((r) => `${r.decision} · ${r.scope} · ${r.key}`);
+      return {
+        ok: true,
+        result: `预设: ${PRESET_LABELS[a.preset]}\n规则（${a.rules.length}）:\n${
+          rules.length ? rules.join("\n") : "（无）"
+        }`,
+      };
+    }
+    if (domain === "recording") {
+      const { recordStatus } = await import("./recording");
+      const rows: string[] = [];
+      for (const t of listLiveTerms()) {
+        const on = await recordStatus(t.ptyId).catch(() => false);
+        const leaf = (() => {
+          for (const tab of st.tabs) {
+            const L = collectLeaves(tab.layout).find((x) => x.id === t.paneId);
+            if (L) return L;
+          }
+          return null;
+        })();
+        rows.push(`#${leaf?.serial ?? "?"} ${on ? "● 录制中" : "○ 未录制"}`);
+      }
+      return { ok: true, result: rows.length ? rows.join("\n") : "（无活动窗格）" };
+    }
+    if (domain === "broadcast") {
+      const ids = new Set(st.broadcastPanes);
+      const serials: number[] = [];
+      for (const tab of st.tabs) {
+        for (const L of collectLeaves(tab.layout)) if (ids.has(L.id)) serials.push(L.serial);
+      }
+      return {
+        ok: true,
+        result: serials.length ? `广播开启中: ${serials.map((n) => `#${n}`).join(" ")}` : "广播未开启",
+      };
+    }
+    if (domain === "extensions") {
+      const { loadExtensions, enabledExtensions } = await import("./extensions");
+      const on = new Set(enabledExtensions().map((e) => e.id));
+      const rows = loadExtensions().map((e) => `${on.has(e.id) ? "✓" : "○"} ${e.name}`);
+      return { ok: true, result: rows.length ? rows.join("\n") : "（无扩展）" };
+    }
+    return { ok: false, result: `未知 domain: ${domain}` };
+  }
+
+  if (name === "mcp_manage") {
+    const {
+      loadMcpServers,
+      upsertMcpServer,
+      connectMcpServer,
+      disconnectMcpServer,
+      deleteMcpServer,
+      newMcpServerId,
+    } = await import("./mcp");
+    const action = String(args.action || "");
+    const findByName = (nm: string) =>
+      loadMcpServers().find((m) => m.name === nm);
+
+    if (action === "add") {
+      const nm = String(args.name || "").trim();
+      if (!nm) return { ok: false, result: "缺少 name" };
+      const transport = args.transport === "http" ? "http" : "stdio";
+      const parts =
+        String(args.command_line || "").match(/"[^"]*"|\S+/g)?.map((p) => p.replace(/^"|"$/g, "")) ?? [];
+      const command = parts[0] ?? "";
+      const cmdArgs = parts.slice(1);
+      const url = String(args.url || "").trim();
+      if (transport === "stdio" && !command) return { ok: false, result: "stdio 需要 command_line" };
+      if (transport === "http" && !url) return { ok: false, result: "http 需要 url" };
+      const env: Record<string, string> = {};
+      for (const line of String(args.env || "").split(/\r?\n/)) {
+        const i = line.indexOf("=");
+        if (i > 0) env[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+      }
+      // 防"配置即执行"：注册 stdio 会启动本地进程，二次确认命令行
+      if (transport === "stdio") {
+        const ok = await askApproval("Agent 想注册 MCP（将启动本地进程）", {
+          message: "配置即执行：确认这是你信任的程序",
+          detail: `${command} ${cmdArgs.join(" ")}`,
+          danger: true,
+        });
+        if (ok === "deny") return { ok: false, result: "用户拒绝了 MCP 注册。" };
+      }
+      const existing = findByName(nm);
+      upsertMcpServer({
+        id: existing?.id ?? newMcpServerId(),
+        name: nm,
+        transport,
+        command,
+        args: cmdArgs,
+        env,
+        url,
+        enabled: true,
+      });
+      return { ok: true, result: `已${existing ? "更新" : "注册"} MCP「${nm}」（可 connect 测试）` };
+    }
+    const target = findByName(String(args.name || "").trim());
+    if (!target) return { ok: false, result: `未找到 MCP server「${args.name}」` };
+    if (action === "connect") {
+      try {
+        const tools = await connectMcpServer(target);
+        return { ok: true, result: `已连接「${target.name}」· ${tools.length} 个工具` };
+      } catch (e) {
+        return { ok: false, result: `连接失败: ${e instanceof Error ? e.message : e}` };
+      }
+    }
+    if (action === "disconnect") {
+      await disconnectMcpServer(target.id);
+      return { ok: true, result: `已断开「${target.name}」` };
+    }
+    if (action === "enable" || action === "disable") {
+      const enabled = action === "enable";
+      upsertMcpServer({ ...target, enabled });
+      if (!enabled) await disconnectMcpServer(target.id);
+      return { ok: true, result: `已${enabled ? "启用" : "停用"}「${target.name}」` };
+    }
+    if (action === "delete") {
+      await disconnectMcpServer(target.id);
+      deleteMcpServer(target.id);
+      return { ok: true, result: `已删除「${target.name}」` };
+    }
+    return { ok: false, result: `未知 action: ${action}` };
+  }
+
+  if (name === "hosts_manage") {
+    const { loadSshHosts, upsertSshHost, newSshHostId } = await import("./sshHosts");
+    const action = String(args.action || "");
+    const findByName = (nm: string) => loadSshHosts().find((h) => h.name === nm);
+
+    if (action === "add") {
+      const nm = String(args.name || "").trim();
+      const host = String(args.host || "").trim();
+      if (!nm || !host) return { ok: false, result: "缺少 name 或 host" };
+      const port = Number(args.port);
+      const existing = findByName(nm);
+      upsertSshHost({
+        id: existing?.id ?? newSshHostId(),
+        name: nm,
+        host,
+        port: Number.isFinite(port) && port > 0 ? port : undefined,
+        user: String(args.user || "").trim() || undefined,
+        identityFile: String(args.identity_file || "").trim() || undefined,
+        jumpHost: String(args.jump_host || "").trim() || undefined,
+        extraArgs: [],
+      });
+      return { ok: true, result: `已${existing ? "更新" : "添加"}主机「${nm}」` };
+    }
+    const target = findByName(String(args.name || "").trim());
+    if (!target) return { ok: false, result: `未找到主机「${args.name}」` };
+    if (action === "delete") {
+      const { deleteSshHost } = await import("./sshHosts");
+      deleteSshHost(target.id);
+      return { ok: true, result: `已删除主机「${target.name}」` };
+    }
+    if (action === "connect") {
+      const { useShellCatalogStore } = await import("../store/shellCatalogStore");
+      const profileId = `ssh:${target.id}`;
+      let profile = useShellCatalogStore.getState().profiles.find((p) => p.id === profileId);
+      if (!profile) {
+        await useShellCatalogStore.getState().scan();
+        profile = useShellCatalogStore.getState().profiles.find((p) => p.id === profileId);
+      }
+      if (!profile) return { ok: false, result: "未能生成 SSH profile（请检查主机配置）" };
+      st.createTabFromProfile(profile);
+      return { ok: true, result: `正在连接「${target.name}」（新标签）` };
+    }
+    return { ok: false, result: `未知 action: ${action}` };
+  }
+
+  if (name === "snippet_manage") {
+    const { loadSnippets, upsertSnippet, newSnippetId, extractParams, renderSnippet } =
+      await import("./snippets");
+    const action = String(args.action || "");
+    const findByName = (nm: string) => loadSnippets().find((s) => s.name === nm);
+
+    if (action === "add") {
+      const nm = String(args.name || "").trim();
+      const template = String(args.template || "");
+      if (!nm || !template.trim()) return { ok: false, result: "缺少 name 或 template" };
+      const existing = findByName(nm);
+      upsertSnippet({
+        id: existing?.id ?? newSnippetId(),
+        name: nm,
+        template,
+        params: extractParams(template).map((n) => ({ name: n })),
+        shellKeys: [],
+        tags: [],
+      });
+      return { ok: true, result: `已${existing ? "更新" : "新增"}片段「${nm}」` };
+    }
+    const target = findByName(String(args.name || "").trim());
+    if (!target) return { ok: false, result: `未找到片段「${args.name}」` };
+    if (action === "delete") {
+      const { deleteSnippet } = await import("./snippets");
+      deleteSnippet(target.id);
+      return { ok: true, result: `已删除片段「${target.name}」` };
+    }
+    if (action === "run") {
+      const values = (args.values && typeof args.values === "object"
+        ? (args.values as Record<string, string>)
+        : {});
+      const command = renderSnippet(target, values).trim();
+      if (!command) return { ok: false, result: "渲染后为空命令" };
+      const serial =
+        args.serial != null && args.serial !== ""
+          ? Number(args.serial)
+          : st.activePane()?.serial;
+      const leaf = serial != null ? st.resolveSerial(serial) : st.activePane();
+      if (!leaf) return { ok: false, result: `目标窗格不存在 (#${serial ?? "焦点"})` };
+      const ptyId = getLivePtyId(leaf.id) || leaf.ptyId || null;
+      if (!ptyId) return { ok: false, result: `窗格 #${leaf.serial} 无 live PTY，请先点一下该窗格` };
+      st.setActivePane(leaf.id);
+      const decision = resolveDangerAction(command, settings, true);
+      if (!decision.run) {
+        await ptyWrite(ptyId, command);
+        return {
+          ok: false,
+          result: `危险/确认模式：片段命令已仅插入 #${leaf.serial} 未回车: ${command}`,
+        };
+      }
+      await ptyWrite(ptyId, `${command}\r`);
+      const { recordCommand } = await import("./commandHistory");
+      recordCommand(command, leaf.shellKey, settings.historyLimit);
+      st.notePaneCommand(leaf.id, command);
+      return { ok: true, result: `已运行片段「${target.name}」于 #${leaf.serial}: ${command}` };
+    }
+    return { ok: false, result: `未知 action: ${action}` };
+  }
+
+  if (name === "recording") {
+    const action = String(args.action || "");
+    const serial =
+      args.serial != null && args.serial !== ""
+        ? Number(args.serial)
+        : st.activePane()?.serial;
+    const leaf = serial != null ? st.resolveSerial(serial) : st.activePane();
+    if (!leaf) return { ok: false, result: `目标窗格不存在 (#${serial ?? "焦点"})` };
+    const ptyId = getLivePtyId(leaf.id) || leaf.ptyId || null;
+    if (!ptyId) return { ok: false, result: `窗格 #${leaf.serial} 无 live PTY` };
+    const { recordStart, recordStop } = await import("./recording");
+    try {
+      if (action === "start") {
+        const path = await recordStart(ptyId);
+        return { ok: true, result: `已开始录制 #${leaf.serial} → ${path}` };
+      }
+      if (action === "stop") {
+        const path = await recordStop(ptyId);
+        return { ok: true, result: path ? `已停止录制 #${leaf.serial} → ${path}` : `#${leaf.serial} 未在录制` };
+      }
+    } catch (e) {
+      return { ok: false, result: `录制失败: ${e instanceof Error ? e.message : e}` };
+    }
+    return { ok: false, result: `未知 action: ${action}` };
+  }
+
+  if (name === "broadcast") {
+    const action = String(args.action || "");
+    if (action === "off") {
+      st.clearBroadcast();
+      return { ok: true, result: "已关闭广播输入" };
+    }
+    if (action === "on") {
+      const wanted: string[] = [];
+      const serialsArg = Array.isArray(args.serials) ? (args.serials as unknown[]) : null;
+      if (serialsArg && serialsArg.length) {
+        for (const s of serialsArg) {
+          const leaf = st.resolveSerial(Number(s));
+          if (leaf) wanted.push(leaf.id);
+        }
+      } else {
+        const tab = st.activeTab();
+        if (tab) for (const L of collectLeaves(tab.layout)) wanted.push(L.id);
+      }
+      if (wanted.length < 2) {
+        return { ok: false, result: "广播至少需要 2 个窗格（当前不足）" };
+      }
+      const current = new Set(st.broadcastPanes);
+      for (const id of wanted) if (!current.has(id)) st.toggleBroadcastPane(id);
+      const serials = wanted.map((id) => {
+        for (const tab of st.tabs) {
+          const L = collectLeaves(tab.layout).find((x) => x.id === id);
+          if (L) return `#${L.serial}`;
+        }
+        return "#?";
+      });
+      return { ok: true, result: `已对 ${serials.join(" ")} 开启广播输入` };
+    }
+    return { ok: false, result: `未知 action: ${action}` };
+  }
+
+  if (name === "skill_manage") {
+    const { writeSkill, deleteSkill } = await import("./agentSkills");
+    const action = String(args.action || "");
+    const id = String(args.id || "").trim();
+    if (!id) return { ok: false, result: "缺少 skill id" };
+    try {
+      if (action === "delete") {
+        await deleteSkill(id);
+        return { ok: true, result: `已删除 skill「${id}」（下一轮生效）` };
+      }
+      if (action === "write") {
+        const body = String(args.body ?? "").trim();
+        if (!body) return { ok: false, result: "write 需要 body（Skill 正文）" };
+        const path = await writeSkill({
+          id,
+          title: args.title != null ? String(args.title) : undefined,
+          category: args.category != null ? String(args.category) : undefined,
+          summary: args.summary != null ? String(args.summary) : undefined,
+          body,
+        });
+        return { ok: true, result: `已写入 ${path}（下一轮对话生效）` };
+      }
+      return { ok: false, result: `未知 action: ${action}` };
+    } catch (e) {
+      return { ok: false, result: `Skill 操作失败: ${e instanceof Error ? e.message : String(e)}` };
+    }
   }
 
   // ── MCP tools (1.0): mcp__<server>__<tool> → Rust runtime ──

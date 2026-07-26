@@ -121,7 +121,7 @@ export function HostsPanel() {
   return (
     <div className="section">
       <div className="section-title">已保存主机（{hosts.length}）</div>
-      <div className="card">
+      <div className="card pad">
         {hosts.length === 0 && (
           <div style={{ color: "var(--muted)", fontSize: 13 }}>
             暂无主机。添加后出现在新建标签 / 分屏的 Shell 菜单（SSH 分组），
@@ -195,7 +195,7 @@ export function HostsPanel() {
       <div className="section-title" style={{ marginTop: 16 }}>
         {draft.id ? "编辑主机" : "添加主机"}
       </div>
-      <div className="card" style={{ display: "grid", gap: 8 }}>
+      <div className="card pad" style={{ display: "grid", gap: 8 }}>
         <div style={{ display: "flex", gap: 8 }}>
           <input
             className="ctrl"

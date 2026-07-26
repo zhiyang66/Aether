@@ -40,6 +40,7 @@ export const READ_ONLY_TOOLS = new Set([
   "list_panes",
   "read_pane",
   "task_read",
+  "app_query",
 ]);
 
 /**

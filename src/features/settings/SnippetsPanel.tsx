@@ -70,7 +70,7 @@ export function SnippetsPanel() {
   return (
     <div className="section">
       <div className="section-title">片段编辑</div>
-      <div className="card">
+      <div className="card pad">
         <div style={{ display: "grid", gap: 8 }}>
           <input
             className="ctrl"
@@ -141,7 +141,7 @@ export function SnippetsPanel() {
       <div className="section-title" style={{ marginTop: 16 }}>
         已保存（{list.length}） · 命令面板中以「片段 ·」前缀出现
       </div>
-      <div className="card">
+      <div className="card pad">
         {list.length === 0 && (
           <div style={{ color: "var(--muted)", fontSize: 13 }}>
             暂无片段。常用命令（部署、连接、构建）保存成片段后，
