@@ -31,6 +31,7 @@ impl PtyHost {
     app: AppHandle,
     shell: &str,
     args: Vec<String>,
+    envs: Vec<(String, String)>,
     cwd: Option<String>,
     cols: u16,
     rows: u16,
@@ -57,6 +58,9 @@ impl PtyHost {
     cmd.env("TERM", "xterm-256color");
     // Force interactive-ish colors where supported
     cmd.env("COLORTERM", "truecolor");
+    for (k, v) in envs {
+      cmd.env(k, v);
+    }
     #[cfg(windows)]
     {
       // Help ConPTY / PowerShell produce a prompt without waiting for extra TTY negotiation

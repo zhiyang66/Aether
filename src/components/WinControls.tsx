@@ -8,7 +8,7 @@ export function WinControls() {
   const requestAppClose = useWorkbenchStore((s) => s.requestAppClose);
 
   return (
-    <div className="win-controls" data-tauri-drag-region={undefined}>
+    <div className="win-controls">
       <button
         className="win-btn"
         type="button"

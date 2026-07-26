@@ -4,6 +4,7 @@ import { WorkbenchPage } from "../features/workbench/WorkbenchPage";
 import { SettingsPage } from "../features/settings/SettingsPage";
 import { ErrorBoundary } from "../components/ErrorBoundary";
 import { AppContextMenu } from "../components/AppContextMenu";
+import { AppDialogHost } from "../components/AppDialog";
 import { useSettingsStore } from "../store/settingsStore";
 import { useShellCatalogStore } from "../store/shellCatalogStore";
 import "../styles/tokens.css";
@@ -28,6 +29,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         <AppContextMenu />
+        <AppDialogHost />
       </BrowserRouter>
     </ErrorBoundary>
   );

@@ -78,9 +78,10 @@
   font-size: 13px;
 }
 
-/* Mock terminal font size from settings */
+/* Mock terminal font size + family from settings */
 .pane-body {
   font-size: var(--term-font-size, 13px);
+  font-family: var(--term-font-family, var(--font-mono));
 }
 
 /* Welcome strip in empty agent */
@@ -481,4 +482,251 @@
   height: 1px;
   margin: 4px 6px;
   background: var(--border);
+}
+
+/* ── In-app dialog (askConfirm / askPrompt) — native dialogs freeze the WebView ── */
+.app-dialog-backdrop {
+  z-index: 260;
+  place-items: center;
+  padding-top: 0;
+}
+
+.app-dialog {
+  width: min(420px, calc(100vw - 48px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-panel);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.app-dialog-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.app-dialog-message {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-dim, var(--fg));
+  opacity: 0.85;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.app-dialog-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+  outline: none;
+}
+
+.app-dialog-input:focus {
+  border-color: var(--accent);
+}
+
+.app-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.app-dialog-btn {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.app-dialog-btn:hover {
+  background: var(--surface-2);
+}
+
+.app-dialog-btn.primary {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.app-dialog-btn.primary.danger {
+  background: oklch(0.4 0.13 25 / 0.5);
+  border-color: oklch(0.62 0.18 25);
+}
+
+/* ---- Terminal buffer search (Ctrl+Shift+F) ---- */
+.term-search-bar {
+  position: absolute;
+  top: 6px;
+  right: 12px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-1, var(--panel-bg, #1b1e24));
+  box-shadow: 0 4px 16px rgb(0 0 0 / 35%);
+}
+
+.term-search-input {
+  width: 180px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 8px;
+  outline: none;
+}
+
+.term-search-input:focus {
+  border-color: var(--accent);
+}
+
+.term-search-btn {
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.term-search-btn:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+/* ---- Command blocks (OSC 133) ---- */
+.term-block-fail {
+  width: 3px !important;
+  height: 100%;
+  border-radius: 2px;
+  background: oklch(0.62 0.18 25);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.pane-blocks-pop {
+  position: absolute;
+  top: 30px;
+  right: 8px;
+  z-index: 40;
+  width: min(420px, calc(100% - 16px));
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-1, var(--panel-bg, #1b1e24));
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+  padding: 6px;
+}
+
+.pane-blocks-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 4px 8px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pane-blocks-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 8px;
+}
+
+.pane-block-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.pane-block-item:hover {
+  background: var(--surface-2);
+}
+
+.pane-block-status {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: oklch(0.7 0.15 150);
+}
+
+.pane-block-status.fail {
+  background: oklch(0.62 0.18 25);
+}
+
+.pane-block-status.running {
+  background: var(--accent);
+  animation: blockPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes blockPulse {
+  50% { opacity: 0.35; }
+}
+
+.pane-block-cmd {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--term-font-family, var(--font-mono));
+}
+
+.pane-block-meta {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.pane-block-actions {
+  display: none;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.pane-block-item:hover .pane-block-actions {
+  display: inline-flex;
+}
+
+.pane-block-act {
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 5px;
+  cursor: pointer;
+}
+
+.pane-block-act:hover {
+  background: var(--surface-3, rgb(255 255 255 / 8%));
+  color: var(--fg);
 }

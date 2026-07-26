@@ -19,6 +19,11 @@ export type SettingsState = {
 
   cwd: string;
   startupCmd: string;
+  /** OSC 133/7 shell integration at spawn (command blocks) */
+  shellIntegration: boolean;
+  /** Notify when a long command finishes while the window is unfocused */
+  notifyOnLongCommand: boolean;
+  notifyThresholdSec: number;
   profiles: { id: string; name: string; path: string; shellKey: string }[];
 
   accentHue: number;
@@ -89,6 +94,9 @@ const defaults = (): Omit<
   copyWithPrompt: false,
   cwd: "",
   startupCmd: "",
+  shellIntegration: true,
+  notifyOnLongCommand: true,
+  notifyThresholdSec: 15,
   profiles: [],
   accentHue: 195,
   themePreset: "cyan",

@@ -6,7 +6,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "./window";
 import { getPaneOutput } from "./paneRegistry";
-import { isDangerousCommand } from "./danger";
+import { resolveDangerAction } from "./danger";
 import { redactAndTrimContext } from "./contextRedact";
 import { useWorkbenchStore } from "../store/workbenchStore";
 import { useSettingsStore } from "../store/settingsStore";
@@ -40,12 +40,21 @@ export const AGENT_TOOLS_OPENAI = [
     type: "function",
     function: {
       name: "read_pane",
-      description: "读取指定窗格最近的终端输出（已脱敏）。",
+      description:
+        "读取指定窗格最近的终端输出（已脱敏）。blocks=true 时返回结构化命令块列表（命令/退出码/耗时），并附最近一块的输出。",
       parameters: {
         type: "object",
         properties: {
           serial: { type: "integer", description: "窗格 #N 序号；省略则用焦点窗格" },
           lines: { type: "integer", description: "最多行数，默认 40，最大 80" },
+          blocks: {
+            type: "boolean",
+            description: "true=返回结构化命令块（需 Shell 集成）",
+          },
+          failed_only: {
+            type: "boolean",
+            description: "配合 blocks：只看失败（exit≠0）的块",
+          },
         },
         additionalProperties: false,
       },
@@ -231,13 +240,20 @@ export const AGENT_TOOLS_OPENAI = [
   },
 ] as const;
 
-export async function agentChatToolsRound(req: {
+/**
+ * One STREAMING chat round (0.7 kernel): text/thinking stream to the UI via
+ * `agent://stream` events with the given streamId; tool calls come back in
+ * the result. Cancellable mid-flight via agentChatCancel(streamId).
+ */
+export async function agentChatStreamToolsRound(req: {
   endpoint: string;
   apiKey?: string;
   provider?: string;
   model: string;
   messages: unknown;
   tools?: unknown;
+  streamId: string;
+  effort?: string;
 }): Promise<ToolChatRound> {
   if (!isTauri()) throw new Error("tool loop requires tauri");
   try {
@@ -249,7 +265,7 @@ export async function agentChatToolsRound(req: {
       finish_reason?: string | null;
       assistantMessage?: unknown;
       assistant_message?: unknown;
-    }>("agent_chat_tools", {
+    }>("agent_chat_stream_tools", {
       req: {
         endpoint: req.endpoint.trim().replace(/\/$/, ""),
         apiKey: req.apiKey?.trim() || null,
@@ -257,6 +273,8 @@ export async function agentChatToolsRound(req: {
         model: req.model,
         messages: req.messages,
         tools: req.tools ?? AGENT_TOOLS_OPENAI,
+        streamId: req.streamId,
+        effort: req.effort || null,
       },
     });
     // Serde may emit snake_case or camelCase depending on path
@@ -419,6 +437,40 @@ export async function executeAgentTool(
     if (!leaf) {
       return { ok: false, result: `窗格 #${serial ?? "?"} 不存在` };
     }
+
+    // Structured command blocks (OSC 133) — needs shell integration
+    if (args.blocks === true || args.blocks === "true") {
+      const { getBlocks, blockHeader, readBlockOutput } = await import(
+        "./commandBlocks"
+      );
+      const { getLiveTerm } = await import("../features/terminal/termRegistry");
+      const failedOnly = args.failed_only === true || args.failed_only === "true";
+      let list = getBlocks(leaf.id);
+      if (failedOnly) {
+        list = list.filter((b) => !b.running && b.exitCode != null && b.exitCode !== 0);
+      }
+      if (!list.length) {
+        return {
+          ok: true,
+          result: failedOnly
+            ? `#${leaf.serial} 暂无失败的命令块。`
+            : `#${leaf.serial} 暂无命令块（需要 Shell 集成：pwsh/bash/zsh，且设置里已开启）。可退回普通 read_pane。`,
+        };
+      }
+      const recent = list.slice(-10);
+      const rows = recent.map((b, i) => `${i + 1}. ${blockHeader(b)}`);
+      const last = recent[recent.length - 1];
+      const live = getLiveTerm(leaf.id);
+      const out = live ? readBlockOutput(live.term, last, 80) : null;
+      const outText = out
+        ? `\n--- 最近一块输出 ---\n${redactAndTrimContext(out, 3000)}`
+        : "";
+      return {
+        ok: true,
+        result: `#${leaf.serial} 命令块（近 ${recent.length} 条）:\n${rows.join("\n")}${outText}`,
+      };
+    }
+
     const raw = getPaneOutput(leaf.id, lines);
     const text = redactAndTrimContext(raw || "（暂无输出）", 4000);
     return {
@@ -475,36 +527,42 @@ export async function executeAgentTool(
       };
     }
 
-    if (settings.execMode === "insert") {
+    // Focus the target pane BEFORE any write — even insert-only must be visible
+    // (a dangerous command silently inserted into a background pane is a trap)
+    st.setActivePane(leaf.id);
+    for (const tab of st.tabs) {
+      if (collectLeaves(tab.layout).some((l) => l.id === leaf.id)) {
+        if (tab.id !== st.activeTabId) st.setActiveTab(tab.id);
+        break;
+      }
+    }
+
+    // Shared policy with the store path (resolveDangerAction) — channels must agree
+    const decision = resolveDangerAction(command, settings, true);
+    if (!decision.run) {
       await ptyWrite(ptyId, command);
+      if (decision.note === "danger-insert") {
+        useWorkbenchStore.getState().toastMsg("⚠ 危险命令 · 已改为仅插入，请在终端确认后手动回车");
+        return {
+          ok: false,
+          result: `危险命令已仅插入未执行（确认模式）· 已聚焦窗格 #${leaf.serial}，等待用户手动回车: ${command}`,
+        };
+      }
       return {
         ok: true,
         result: `已按「仅插入」写入 #${leaf.serial}（未回车）: ${command}`,
       };
     }
-    if (
-      settings.execMode === "confirm" &&
-      settings.confirmDanger &&
-      isDangerousCommand(command)
-    ) {
-      await ptyWrite(ptyId, command);
-      return {
-        ok: false,
-        result: `危险命令已仅插入未执行（确认模式）: ${command}`,
-      };
+    if (decision.note === "danger-auto-run") {
+      useWorkbenchStore.getState().toastMsg("⚠ 危险命令 · 已按自动模式执行");
     }
 
     const beforeOut = getPaneOutput(leaf.id, 8);
     // Direct PTY write — do not depend on insertToPane / leaf.ptyId
     try {
-      // Focus UI first (no second write)
-      st.setActivePane(leaf.id);
-      for (const tab of st.tabs) {
-        if (collectLeaves(tab.layout).some((l) => l.id === leaf.id)) {
-          if (tab.id !== st.activeTabId) st.setActiveTab(tab.id);
-          break;
-        }
-      }
+      // Feed block tracker so OSC 133 C-mark can attach the command text
+      const { getLiveTerm } = await import("../features/terminal/termRegistry");
+      getLiveTerm(leaf.id)?.blocks?.noteSubmittedCommand(command);
       await ptyWrite(ptyId, `${command}\r`);
       // History only (insertToPane would write again)
       const { recordCommand } = await import("./commandHistory");
@@ -686,7 +744,13 @@ export type ToolLoopCallbacks = {
 };
 
 /**
- * Run up to maxRounds of tool calls. Returns final assistant text for the user.
+ * Run up to maxRounds of STREAMING tool-call rounds (0.7 kernel).
+ *
+ * Text/thinking of every round streams live to the UI via `agent://stream`
+ * events carrying opts.streamId — the caller listens and renders previews.
+ * The returned text joins all rounds' content so nothing the model said
+ * between tool calls is lost. Cancel via agentChatCancel(streamId): the
+ * in-flight HTTP round aborts and the loop returns { cancelled: true }.
  */
 export async function runAgentToolLoop(opts: {
   endpoint: string;
@@ -696,47 +760,58 @@ export async function runAgentToolLoop(opts: {
   /** Full messages array including system + history + user (mutable copy) */
   messages: unknown[];
   maxRounds?: number;
+  /** Stream id shared by every round — register BEFORE calling, cancel any time */
+  streamId: string;
+  /** low | medium | high | max */
+  effort?: string;
   cb?: ToolLoopCallbacks;
 }): Promise<{
   text: string;
   usedTools: boolean;
   rounds: number;
   trace: ToolTraceStep[];
+  cancelled: boolean;
 }> {
   const maxRounds = opts.maxRounds ?? 4;
-  let messages = [...opts.messages];
+  const messages = [...opts.messages];
   let usedTools = false;
-  let lastText = "";
+  const texts: string[] = [];
   const trace: ToolTraceStep[] = [];
+  const joined = () => texts.join("\n\n").trim();
 
-  for (let round = 0; round < maxRounds; round++) {
-    if (opts.cb?.shouldAbort?.()) {
-      return { text: lastText || "（已停止）", usedTools, rounds: round, trace };
-    }
-    opts.cb?.onStatus?.(
-      round === 0 ? "思考中…" : `工具回合 ${round}/${maxRounds}…`,
-    );
-
-    const res = await agentChatToolsRound({
+  const round = (tools: unknown) =>
+    agentChatStreamToolsRound({
       endpoint: opts.endpoint,
       apiKey: opts.apiKey,
       provider: opts.provider,
       model: opts.model,
       messages,
-      tools: AGENT_TOOLS_OPENAI,
+      tools,
+      streamId: opts.streamId,
+      effort: opts.effort,
     });
 
-    if (res.content) {
-      lastText = res.content;
-      opts.cb?.onDelta?.(res.content);
+  for (let r = 0; r < maxRounds; r++) {
+    if (opts.cb?.shouldAbort?.()) {
+      return { text: joined() || "（已停止）", usedTools, rounds: r, trace, cancelled: true };
+    }
+    opts.cb?.onStatus?.(r === 0 ? "思考中…" : `工具回合 ${r}/${maxRounds}…`);
+
+    const res = await round(AGENT_TOOLS_OPENAI);
+
+    if (res.content) texts.push(res.content);
+
+    if (res.finishReason === "cancelled") {
+      return { text: joined(), usedTools, rounds: r + 1, trace, cancelled: true };
     }
 
     if (!res.toolCalls.length) {
       return {
-        text: lastText || res.content || "（空回复）",
+        text: joined() || "（空回复）",
         usedTools,
-        rounds: round + 1,
+        rounds: r + 1,
         trace,
+        cancelled: false,
       };
     }
 
@@ -745,7 +820,7 @@ export async function runAgentToolLoop(opts: {
 
     for (const tc of res.toolCalls) {
       if (opts.cb?.shouldAbort?.()) {
-        return { text: lastText || "（已停止）", usedTools, rounds: round + 1, trace };
+        return { text: joined() || "（已停止）", usedTools, rounds: r + 1, trace, cancelled: true };
       }
       const argsPreview = (tc.arguments || "").slice(0, 80);
       opts.cb?.onStatus?.(`调用 ${tc.name}…`);
@@ -778,15 +853,14 @@ export async function runAgentToolLoop(opts: {
   }
 
   opts.cb?.onStatus?.("汇总结果…");
-  const final = await agentChatToolsRound({
-    endpoint: opts.endpoint,
-    apiKey: opts.apiKey,
-    provider: opts.provider,
-    model: opts.model,
-    messages,
-    tools: [],
-  });
-  const text =
-    final.content || lastText || "（达到工具回合上限，请根据终端输出继续）";
-  return { text, usedTools, rounds: maxRounds + 1, trace };
+  const final = await round([]);
+  if (final.content) texts.push(final.content);
+  const cancelled = final.finishReason === "cancelled";
+  return {
+    text: joined() || "（达到工具回合上限，请根据终端输出继续）",
+    usedTools,
+    rounds: maxRounds + 1,
+    trace,
+    cancelled,
+  };
 }

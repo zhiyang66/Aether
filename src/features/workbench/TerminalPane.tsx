@@ -11,6 +11,13 @@ import {
 import { isTauri } from "../../lib/window";
 import { getLiveTerm } from "../terminal/termRegistry";
 import { XtermHost } from "../terminal/XtermHost";
+import {
+  formatDuration,
+  getBlocks,
+  onBlocksChanged,
+  readBlockOutput,
+  type CommandBlock,
+} from "../../lib/commandBlocks";
 
 function LeafView({
   pane,
@@ -34,6 +41,8 @@ function LeafView({
   const [suggestIdx, setSuggestIdx] = useState(0);
   const [showSuggest, setShowSuggest] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
+  const [blocksOpen, setBlocksOpen] = useState(false);
+  const [blocksVersion, setBlocksVersion] = useState(0);
   const [ptyId, setPtyId] = useState<string | null>(null);
   // Prefer real PTY whenever Tauri is present. useMock may be stuck true if the
   // store module evaluated before __TAURI_INTERNALS__ was injected.
@@ -68,6 +77,82 @@ function LeafView({
     setSuggestIdx(0);
     setShowSuggest(suggestions.length > 0);
   }, [suggestions]);
+
+  // Re-render blocks dropdown when OSC 133 marks land for this pane
+  useEffect(() => {
+    if (!realTerm) return;
+    return onBlocksChanged((pid) => {
+      if (pid === pane.id) setBlocksVersion((v) => v + 1);
+    });
+  }, [pane.id, realTerm]);
+
+  const blocks = useMemo(
+    () => (realTerm ? [...getBlocks(pane.id)].reverse() : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pane.id, realTerm, blocksVersion, blocksOpen],
+  );
+
+  const copyText = (text: string, okMsg: string) => {
+    void navigator.clipboard?.writeText(text).then(
+      () => useWorkbenchStore.getState().toastMsg(okMsg),
+      () => useWorkbenchStore.getState().toastMsg("复制失败"),
+    );
+  };
+
+  const blockActions = {
+    jump: (b: CommandBlock) => {
+      const live = getLiveTerm(pane.id);
+      if (!live || !b.marker || b.marker.isDisposed) {
+        useWorkbenchStore.getState().toastMsg("该块已被清屏或滚出缓冲区");
+        return;
+      }
+      live.term.scrollToLine(b.marker.line);
+      setBlocksOpen(false);
+    },
+    copyCmd: (b: CommandBlock) => {
+      if (!b.command) return;
+      copyText(b.command, "已复制命令");
+    },
+    copyOut: (b: CommandBlock) => {
+      const live = getLiveTerm(pane.id);
+      const out = live ? readBlockOutput(live.term, b) : null;
+      if (out == null) {
+        useWorkbenchStore.getState().toastMsg("输出已不在缓冲区");
+        return;
+      }
+      // B1: honor copyWithPrompt — strip the command/prompt line unless enabled
+      const text = settings.copyWithPrompt
+        ? out
+        : out
+            .split("\n")
+            .filter((ln, i) => !(i === 0 && b.command && ln.includes(b.command)))
+            .join("\n");
+      copyText(text, "已复制输出");
+    },
+    rerun: (b: CommandBlock) => {
+      if (!b.command) return;
+      const live = getLiveTerm(pane.id);
+      if (live?.ptyId) {
+        live.blocks?.noteSubmittedCommand(b.command);
+        void import("../../ipc/pty").then(({ ptyWrite }) => {
+          void ptyWrite(live.ptyId!, `${b.command}\r`);
+        });
+        setBlocksOpen(false);
+      }
+    },
+    diagnose: (b: CommandBlock) => {
+      // AiPanel is unmounted while closed — open it first, then dispatch
+      useWorkbenchStore.getState().setAiOpen(true);
+      window.setTimeout(() => {
+        window.dispatchEvent(
+          new CustomEvent("sw:ai-diagnose", {
+            detail: { paneId: pane.id, blockId: b.id },
+          }),
+        );
+      }, 60);
+      setBlocksOpen(false);
+    },
+  };
 
   useEffect(() => {
     if (bodyRef.current && !realTerm) {
@@ -150,7 +235,7 @@ function LeafView({
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
               minWidth: 0,
-              fontFamily: "var(--font-mono)",
+              fontFamily: "var(--term-font-family, var(--font-mono))",
               fontSize: 11,
             }}
           >
@@ -158,6 +243,25 @@ function LeafView({
           </span>
         </span>
         <span className="ph-right">
+          {realTerm && (
+            <button
+              className="pane-icon-btn"
+              type="button"
+              title="命令块（Ctrl+Alt+↑/↓ 跳转）"
+              aria-label="命令块列表"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setBlocksOpen((v) => !v);
+                setHistOpen(false);
+              }}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                <rect x="4" y="4" width="16" height="6" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+                <rect x="4" y="14" width="16" height="6" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+              </svg>
+            </button>
+          )}
           <button
             className="pane-icon-btn"
             type="button"
@@ -167,6 +271,7 @@ function LeafView({
               e.preventDefault();
               e.stopPropagation();
               setHistOpen((v) => !v);
+              setBlocksOpen(false);
               setShowSuggest(false);
             }}
           >
@@ -233,6 +338,97 @@ function LeafView({
           </button>
         </span>
       </div>
+      {blocksOpen && (
+        <div className="pane-blocks-pop" onMouseDown={(e) => e.stopPropagation()}>
+          <div className="pane-blocks-title">
+            命令块
+            <span style={{ fontWeight: 400 }}>
+              {blocks.length ? `${blocks.length} 条` : ""}
+            </span>
+          </div>
+          {blocks.length === 0 && (
+            <div className="pane-blocks-empty">
+              暂无命令块。需要 Shell 集成（设置 → 终端）且 Shell 支持
+              pwsh/bash/zsh。
+            </div>
+          )}
+          {blocks.map((b) => (
+            <div
+              key={b.id}
+              className="pane-block-item"
+              role="button"
+              tabIndex={0}
+              onClick={() => blockActions.jump(b)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") blockActions.jump(b);
+              }}
+              title={b.command || "（未捕获命令）"}
+            >
+              <span
+                className={`pane-block-status${
+                  b.running ? " running" : b.exitCode ? " fail" : ""
+                }`}
+              />
+              <span className="pane-block-cmd">
+                {b.command || "（未捕获命令）"}
+              </span>
+              <span className="pane-block-meta">
+                {b.running
+                  ? "运行中"
+                  : `exit ${b.exitCode ?? "?"} · ${formatDuration((b.endedAt ?? b.startedAt) - b.startedAt)}`}
+              </span>
+              <span className="pane-block-actions">
+                <button
+                  type="button"
+                  className="pane-block-act"
+                  title="复制命令"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    blockActions.copyCmd(b);
+                  }}
+                >
+                  命令
+                </button>
+                <button
+                  type="button"
+                  className="pane-block-act"
+                  title="复制输出"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    blockActions.copyOut(b);
+                  }}
+                >
+                  输出
+                </button>
+                <button
+                  type="button"
+                  className="pane-block-act"
+                  title="重新运行"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    blockActions.rerun(b);
+                  }}
+                >
+                  重跑
+                </button>
+                {!b.running && b.exitCode !== 0 && b.exitCode != null && (
+                  <button
+                    type="button"
+                    className="pane-block-act"
+                    title="让 Agent 诊断这次失败"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      blockActions.diagnose(b);
+                    }}
+                  >
+                    AI 诊断
+                  </button>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {histOpen && (
         <div
           className="pane-hist-pop"

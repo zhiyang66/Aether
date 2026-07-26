@@ -89,14 +89,3 @@ export function downloadJson(filename: string, obj: unknown) {
   a.click();
   URL.revokeObjectURL(a.href);
 }
-
-export function reorderTabs<T extends { id: string }>(tabs: T[], fromId: string, toId: string): T[] {
-  if (fromId === toId) return tabs;
-  const from = tabs.findIndex((t) => t.id === fromId);
-  const to = tabs.findIndex((t) => t.id === toId);
-  if (from < 0 || to < 0) return tabs;
-  const next = [...tabs];
-  const [item] = next.splice(from, 1);
-  next.splice(to, 0, item);
-  return next;
-}

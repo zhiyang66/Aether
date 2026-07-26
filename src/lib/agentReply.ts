@@ -115,8 +115,3 @@ function cjkCharRatio(s: string): number {
   const den = cjk + letters;
   return den ? cjk / den : 0;
 }
-
-/** Text for action parsing: keep raw model output. */
-export function rawForActionParse(raw: string): string {
-  return raw || "";
-}

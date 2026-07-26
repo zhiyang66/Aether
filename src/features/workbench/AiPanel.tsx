@@ -25,7 +25,10 @@ import {
   type AgentSlashCommand,
 } from "../../lib/agentSlash";
 
-/** Effort is UI-only for local mock delay until providers map it to API params. */
+/**
+ * Effort maps to real API params since 0.7: reasoning_effort (OpenAI 兼容) /
+ * thinking budget（Anthropic）。delay 仅用于浏览器 mock 的模拟延迟。
+ */
 const EFFORTS = [
   { id: "low" as const, label: "低 · 快", short: "低", delay: 220 },
   { id: "medium" as const, label: "中 · 均衡", short: "中", delay: 380 },
@@ -287,6 +290,12 @@ export function AiPanel() {
         toastMsg("动作缺少回复内容");
         return;
       }
+      // Busy: sendWithText would silently drop the message — keep the chip
+      // alive and tell the user instead of consuming it for nothing.
+      if (useWorkbenchStore.getState().agentBusy) {
+        toastMsg("生成中 · 请先停止或等待完成再点击");
+        return;
+      }
       if (messageId) markActionsConsumed(messageId);
       setInput("");
       // Continuations always go to the active session at click time
@@ -405,11 +414,58 @@ export function AiPanel() {
     const endpoint = settings.aiEndpoint.trim();
     const model = aiModel || settings.aiDefaultModelId;
 
-    // Real endpoint: prefer tool loop (can run_command / read_pane), fallback to stream
+    // Real endpoint: streaming tool loop (0.7 kernel), fallback to plain stream
     if (endpoint && model && isTauri()) {
       const streamId = nextId("stream");
       setAgentStreamId(streamId);
       ensureExampleExtension();
+
+      // Listener FIRST: tool-loop rounds stream text/thinking under this id.
+      // ("done" only arrives from the plain-stream fallback path.)
+      try {
+        const un = await listen<{
+          id: string;
+          type: string;
+          text?: string;
+          error?: string;
+        }>("agent://stream", (ev) => {
+          if (ev.payload.id !== streamId) return;
+          if (streamSettledRef.current) return;
+          if (ev.payload.type === "thinking" && ev.payload.text) {
+            thinkingAccRef.current += ev.payload.text;
+            setThinkingPreview(thinkingAccRef.current);
+          }
+          if (ev.payload.type === "delta" && ev.payload.text) {
+            streamAccRef.current += ev.payload.text;
+            setStreamPreview(streamAccRef.current);
+          }
+          if (ev.payload.type === "error") {
+            if (!settleStream()) return;
+            const err = ev.payload.error || "请求失败";
+            appendAgentMessage(
+              { role: "assistant", content: err, html: markdownToHtml(err) },
+              chatSessionId,
+            );
+            cleanupStream();
+          }
+          if (ev.payload.type === "cancelled") {
+            cleanupStream();
+          }
+          if (ev.payload.type === "done") {
+            if (!settleStream()) return;
+            finishAssistant(
+              streamAccRef.current,
+              bundle.focusSerial,
+              thinkingAccRef.current,
+              chatSessionId,
+            );
+            cleanupStream();
+          }
+        });
+        unlistenRef.current = un;
+      } catch {
+        /* listener failure → previews unavailable but loop still works */
+      }
       const system = [
         AGENT_BASE_PROMPT,
         formatAgentSkillsPrompt(),
@@ -436,10 +492,9 @@ export function AiPanel() {
         { role: "user", content: text },
       ];
 
-      // ── Primary path: tool-calling loop ──
+      // ── Primary path: streaming tool loop (cancellable mid-flight) ──
       let toolFailed = false;
       try {
-        setStreamPreview("正在调用工具…");
         setLiveToolTrace([]);
         const loop = await runAgentToolLoop({
           endpoint,
@@ -448,14 +503,14 @@ export function AiPanel() {
           model,
           messages: baseMessages,
           maxRounds: 5,
+          streamId,
+          effort: aiEffort,
           cb: {
             shouldAbort: () => streamSettledRef.current,
             onStatus: (msg) => {
-              if (!streamSettledRef.current) setStreamPreview(msg);
-            },
-            onDelta: (t) => {
-              streamAccRef.current = t;
-              if (!streamSettledRef.current) setStreamPreview(t);
+              if (!streamSettledRef.current && !streamAccRef.current) {
+                setStreamPreview(msg);
+              }
             },
             onToolEnd: (step) => {
               setLiveToolTrace((prev) => [
@@ -470,6 +525,22 @@ export function AiPanel() {
             },
           },
         });
+        if (loop.cancelled) {
+          // Stop button already settled + wrote the partial message; this
+          // handles cancellation arriving without user stop (edge case).
+          if (settleStream()) {
+            finishAssistant(
+              loop.text || streamAccRef.current,
+              bundle.focusSerial,
+              thinkingAccRef.current,
+              chatSessionId,
+              loop.trace,
+            );
+          }
+          cleanupStream();
+          setLiveToolTrace([]);
+          return;
+        }
         const bad =
           !loop.text ||
           /error decoding response body|TOOLS_UNSUPPORTED|JSON 解析失败|空响应体/i.test(
@@ -479,7 +550,7 @@ export function AiPanel() {
           finishAssistant(
             loop.text,
             bundle.focusSerial,
-            "",
+            thinkingAccRef.current,
             chatSessionId,
             loop.trace,
           );
@@ -500,60 +571,15 @@ export function AiPanel() {
         setStreamPreview(`工具通道不可用，改用流式… (${hint.slice(0, 80)})`);
       }
 
-      // Reset settle so stream fallback can complete
+      // Reset settle so stream fallback can complete (listener stays registered)
       if (toolFailed) {
         streamSettledRef.current = false;
         streamAccRef.current = "";
         thinkingAccRef.current = "";
       }
 
-      // ── Fallback: classic stream (no tools) ──
+      // ── Fallback: classic stream (no tools; "done" event finalizes) ──
       try {
-        const un = await listen<{
-          id: string;
-          type: string;
-          text?: string;
-          error?: string;
-        }>("agent://stream", (ev) => {
-          if (ev.payload.id !== streamId) return;
-          if (streamSettledRef.current) return;
-          if (ev.payload.type === "thinking" && ev.payload.text) {
-            thinkingAccRef.current += ev.payload.text;
-            setThinkingPreview(thinkingAccRef.current);
-          }
-          if (ev.payload.type === "delta" && ev.payload.text) {
-            streamAccRef.current += ev.payload.text;
-            setStreamPreview(streamAccRef.current);
-          }
-          if (ev.payload.type === "error") {
-            if (!settleStream()) return;
-            const err = ev.payload.error || "请求失败";
-            appendAgentMessage(
-              {
-                role: "assistant",
-                content: err,
-                html: markdownToHtml(err),
-              },
-              chatSessionId,
-            );
-            cleanupStream();
-          }
-          if (ev.payload.type === "cancelled") {
-            cleanupStream();
-          }
-          if (ev.payload.type === "done") {
-            if (!settleStream()) return;
-            finishAssistant(
-              streamAccRef.current,
-              bundle.focusSerial,
-              thinkingAccRef.current,
-              chatSessionId,
-            );
-            cleanupStream();
-          }
-        });
-        unlistenRef.current = un;
-
         await agentChat({
           endpoint,
           apiKey: settings.aiApiKey,
@@ -699,10 +725,73 @@ export function AiPanel() {
     });
   };
 
+  // 0.8: "AI 诊断" from a failed command block → send block context to agent.
+  // Ref keeps the latest sendWithText (its closure holds current settings).
+  const sendWithTextRef = useRef<((t: string) => Promise<void>) | null>(null);
+  sendWithTextRef.current = sendWithText;
+  useEffect(() => {
+    const onDiagnose = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ paneId: string; blockId: string }>)
+        .detail;
+      if (!detail) return;
+      if (useWorkbenchStore.getState().agentBusy) {
+        toastMsg("生成中 · 请先停止或等待完成再诊断");
+        return;
+      }
+      void (async () => {
+        const [{ getBlocks, blockHeader, readBlockOutput }, { getLiveTerm }] =
+          await Promise.all([
+            import("../../lib/commandBlocks"),
+            import("../terminal/termRegistry"),
+          ]);
+        const block = getBlocks(detail.paneId).find(
+          (b) => b.id === detail.blockId,
+        );
+        if (!block) {
+          toastMsg("命令块已不存在");
+          return;
+        }
+        const live = getLiveTerm(detail.paneId);
+        const out = live ? readBlockOutput(live.term, block, 120) : null;
+        const st = useWorkbenchStore.getState();
+        let serial = "";
+        for (const t of st.tabs) {
+          const leaf = findLeaf(t.layout, detail.paneId);
+          if (leaf) {
+            serial = `#${leaf.serial}`;
+            break;
+          }
+        }
+        const prompt = [
+          `请诊断窗格 ${serial} 中这条失败的命令，解释原因并给出修复建议：`,
+          "",
+          "```",
+          blockHeader(block),
+          ...(out ? [out.slice(-4000)] : ["（输出已不在缓冲区）"]),
+          "```",
+        ].join("\n");
+        void sendWithTextRef.current?.(prompt);
+      })();
+    };
+    window.addEventListener("sw:ai-diagnose", onDiagnose);
+    return () => window.removeEventListener("sw:ai-diagnose", onDiagnose);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const send = () => {
     const text = input.trim();
     if (!text) return;
-    if (agentBusy && !/^\/stop\b/i.test(text)) return;
+    // /stop works even while busy — equivalent to the Stop button
+    if (/^\/stop\b/i.test(text)) {
+      setInput("");
+      if (useWorkbenchStore.getState().agentBusy) {
+        void stopGeneration();
+      } else {
+        toastMsg("当前没有正在生成的回复");
+      }
+      return;
+    }
+    if (agentBusy) return;
 
     // 1) Completing slash menu with prefix only → accept selection
     if (
@@ -1029,6 +1118,44 @@ export function AiPanel() {
                 ))}
               </div>
             )}
+            {m.role === "assistant" &&
+              m.id === lastAssistantId &&
+              !m.actionsConsumed &&
+              (!m.actions || m.actions.length === 0) &&
+              !!m.cmd?.trim() && (
+              <div className="msg-actions">
+                <button
+                  type="button"
+                  className="chip-btn"
+                  title={m.cmd}
+                  onClick={() =>
+                    runAction(
+                      { type: "insert", targetSerial: m.targetSerial, command: m.cmd },
+                      m.id,
+                    )
+                  }
+                >
+                  插入{m.targetSerial != null ? ` #${m.targetSerial}` : ""}
+                </button>
+                <button
+                  type="button"
+                  className="chip-btn"
+                  title={m.cmd}
+                  onClick={() =>
+                    runAction(
+                      {
+                        type: "insert_and_run",
+                        targetSerial: m.targetSerial,
+                        command: m.cmd,
+                      },
+                      m.id,
+                    )
+                  }
+                >
+                  执行
+                </button>
+              </div>
+            )}
           </div>
         ))}
         {agentBusy && (
@@ -1132,7 +1259,8 @@ export function AiPanel() {
               }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                if (agentBusy) return;
+                // busy 时放行 /stop（等价停止按钮）；其余输入由 send() 内部拦截
+                if (agentBusy && !/^\/stop\b/i.test(input.trim())) return;
                 send();
               }
             }}
@@ -1276,7 +1404,7 @@ export function AiPanel() {
                           </svg>
                           回复节奏
                         </button>
-                        <div className="ai-menu-title">本地模拟延迟（云端 API 暂不映射）</div>
+                        <div className="ai-menu-title">推理力度（OpenAI reasoning_effort / Anthropic thinking）</div>
                         {EFFORTS.map((ef) => (
                           <button
                             key={ef.id}

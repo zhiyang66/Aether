@@ -4,6 +4,8 @@ import { Titlebar } from "./Titlebar";
 import { Tabbar } from "./Tabbar";
 import { PanesHost } from "./TerminalPane";
 import { AiPanel } from "./AiPanel";
+import { Statusbar } from "./Statusbar";
+import { isTauri } from "../../lib/window";
 import { Toast } from "../../components/Toast";
 import { CommandPalette } from "../../components/CommandPalette";
 import { useWorkbenchStore } from "../../store/workbenchStore";
@@ -56,6 +58,16 @@ export function WorkbenchPage() {
     document.documentElement.style.setProperty("--term-font-size", `${fontSize}px`);
   }, [fontSize]);
 
+  // Terminal font family channel — consumed by mock terminal (.pane-body);
+  // xterm reads the setting directly in XtermHost.
+  const fontFamily = useSettingsStore((s) => s.fontFamily);
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--term-font-family",
+      `"${fontFamily}", var(--font-mono)`,
+    );
+  }, [fontFamily]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.ctrlKey || e.metaKey;
@@ -80,7 +92,9 @@ export function WorkbenchPage() {
         setShellMenuOpen(true);
       }
       if (mod && e.key.toLowerCase() === "w" && !e.shiftKey) {
-        if (inInput && !target?.classList.contains("cmd-input")) return;
+        // xterm focus lives in .xterm-helper-textarea — Ctrl+W must still close the tab there
+        const inXterm = !!target?.classList.contains("xterm-helper-textarea");
+        if (inInput && !inXterm && !target?.classList.contains("cmd-input")) return;
         e.preventDefault();
         if (activeTabId) closeTab(activeTabId);
       }
@@ -173,6 +187,10 @@ export function WorkbenchPage() {
         </div>
         {settings.aiEnabled && aiOpen && <AiPanel />}
       </div>
+      <Statusbar
+        mock={isTauri() ? false : useWorkbenchStore.getState().useMockTerminal}
+        aiOpen={aiOpen}
+      />
       <Toast />
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>

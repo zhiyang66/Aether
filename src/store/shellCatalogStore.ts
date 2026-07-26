@@ -6,6 +6,7 @@ import {
   browserFallbackProfiles,
   mapScanRow,
 } from "../lib/shellProfile";
+import { useSettingsStore } from "./settingsStore";
 
 type ShellCatalogState = {
   profiles: ScannedShellProfile[];
@@ -70,6 +71,15 @@ export const useShellCatalogStore = create<ShellCatalogState>((set, get) => ({
   defaultProfile: () => {
     const list = get().profiles;
     if (!list.length) return undefined;
+    // User's default shell (settings) wins; hardcoded priority is only a fallback
+    const pref = useSettingsStore.getState().defaultShell?.trim();
+    if (pref) {
+      const hit =
+        list.find((p) => p.shellKey === pref) ||
+        list.find((p) => p.shellKey.startsWith(`${pref}:`)) ||
+        list.find((p) => p.id === pref);
+      if (hit) return hit;
+    }
     // prefer pwsh, then powershell, then first
     return (
       list.find((p) => p.id === "ps-pwsh") ||

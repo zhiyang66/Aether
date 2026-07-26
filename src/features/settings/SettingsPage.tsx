@@ -11,9 +11,13 @@ import { THEME_PRESETS } from "../../lib/themes";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { ExtensionsPanel } from "./ExtensionsPanel";
 import { checkForUpdate } from "../../lib/updateCheck";
+import { askConfirm } from "../../components/AppDialog";
 import logoUrl from "../../assets/logo.png";
 import "../../styles/settings.css";
 import "../../styles/product.css";
+
+/** Build-time version from package.json; fallback for test runners without the define. */
+const APP_VERSION = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0-dev";
 
 type PanelId =
   | "general"
@@ -328,6 +332,43 @@ export function SettingsPage() {
                   </Row>
                 </div>
               </div>
+              <div className="section">
+                <div className="section-title">命令块（Shell 集成）</div>
+                <div className="card">
+                  <Row
+                    label="Shell 集成"
+                    desc="注入 OSC 133 标记，启用命令块/退出码/失败标记（支持 pwsh、bash、zsh；新会话生效）"
+                  >
+                    <Switch
+                      checked={s.shellIntegration}
+                      onChange={(v) => s.patch({ shellIntegration: v })}
+                    />
+                  </Row>
+                  <Row
+                    label="长命令完成通知"
+                    desc="窗口未聚焦时，超过阈值的命令结束后发送系统通知"
+                  >
+                    <Switch
+                      checked={s.notifyOnLongCommand}
+                      onChange={(v) => s.patch({ notifyOnLongCommand: v })}
+                    />
+                  </Row>
+                  <Row label="通知阈值（秒）" desc="命令运行超过该时长才通知">
+                    <input
+                      className="ctrl"
+                      type="number"
+                      min={3}
+                      max={600}
+                      style={{ width: 90 }}
+                      value={s.notifyThresholdSec}
+                      onChange={(e) => {
+                        const n = Math.min(600, Math.max(3, Number(e.target.value) || 15));
+                        s.patch({ notifyThresholdSec: n });
+                      }}
+                    />
+                  </Row>
+                </div>
+              </div>
             </section>
           )}
 
@@ -470,8 +511,8 @@ export function SettingsPage() {
                       }
                     >
                       <option value="openai-compat">OpenAI 兼容 API（推荐）</option>
+                      <option value="anthropic">Anthropic 原生（/v1/messages）</option>
                       <option value="custom">自定义（仍按 OpenAI /v1 协议）</option>
-                      {/* anthropic 协议尚未接入请求体，暂不提供以免误导 */}
                     </select>
                   </Row>
                   <Row
@@ -672,6 +713,21 @@ export function SettingsPage() {
                   <Row label="按 Shell 分桶">
                     <Switch checked={s.historyByShell} onChange={(v) => s.patch({ historyByShell: v })} />
                   </Row>
+                  <Row label="历史容量上限" desc="超出后丢弃最旧记录（500–20000）">
+                    <input
+                      className="ctrl"
+                      type="number"
+                      min={500}
+                      max={20000}
+                      step={500}
+                      value={s.historyLimit}
+                      onChange={(e) => {
+                        const n = Math.min(20000, Math.max(500, Number(e.target.value) || 5000));
+                        s.patch({ historyLimit: n });
+                      }}
+                      style={{ width: 96 }}
+                    />
+                  </Row>
                   <Row label="接受建议后">
                     <Segmented
                       value={s.suggestAccept}
@@ -691,10 +747,16 @@ export function SettingsPage() {
                         className="btn"
                         type="button"
                         onClick={() => {
-                          if (confirm("确定清除全部命令历史？")) {
-                            clearHistory();
-                            toastMsg("命令历史已清除");
-                          }
+                          void askConfirm("清除命令历史", {
+                            message: "确定清除全部命令历史？此操作不可撤销。",
+                            danger: true,
+                            okLabel: "清除",
+                          }).then((ok) => {
+                            if (ok) {
+                              clearHistory();
+                              toastMsg("命令历史已清除");
+                            }
+                          });
                         }}
                       >
                         清除历史…
@@ -733,9 +795,12 @@ export function SettingsPage() {
                         ["切换窗格", "Ctrl+Alt+←/→", "焦点在分屏间循环"],
                         ["Agent 面板", "Ctrl+Shift+A", "显示/隐藏"],
                         ["清屏", "Ctrl+L", "清空焦点窗格（终端内亦可）"],
+                        ["焦点最大化", "Ctrl+Shift+M", "最大化/还原焦点窗格"],
                         ["中断 / 复制", "Ctrl+C", "终端：有选区复制，否则 SIGINT"],
                         ["强制复制", "Ctrl+Shift+C", "终端：复制选区"],
+                        ["复制（备用）", "Ctrl+Insert", "终端：复制选区"],
                         ["粘贴", "Ctrl+V", "终端：粘贴到 PTY"],
+                        ["粘贴（备用）", "Shift+Insert", "终端：粘贴到 PTY"],
                         ["打开设置", "Ctrl+,", "本页"],
                       ].map(([a, k, d]) => (
                         <tr key={a}>
@@ -772,7 +837,7 @@ export function SettingsPage() {
                     </div>
                     <div>
                       <div className="about-name">Aether</div>
-                      <div className="about-ver">v0.6.0 · Aether</div>
+                      <div className="about-ver">v{APP_VERSION} · Aether</div>
                     </div>
                   </div>
                   <dl className="about-meta">
@@ -809,15 +874,16 @@ export function SettingsPage() {
                         className="btn"
                         onClick={async () => {
                           const r = await checkForUpdate({
-                            current: "0.6.0",
+                            current: APP_VERSION,
                             feedUrl: s.updateFeedUrl,
                           });
                           if (r.status === "disabled") toastMsg("未配置更新源");
                           else if (r.status === "up-to-date") toastMsg(`已是最新 · ${r.current}`);
                           else if (r.status === "available") {
-                            const go = confirm(
-                              `发现新版本 ${r.remote.version}\n\n${r.remote.notes || ""}\n\n打开下载页？`,
-                            );
+                            const go = await askConfirm(`发现新版本 ${r.remote.version}`, {
+                              message: `${r.remote.notes || ""}\n\n打开下载页？`.trim(),
+                              okLabel: "打开下载页",
+                            });
                             if (go && r.remote.url) window.open(r.remote.url, "_blank");
                             else toastMsg(`可用版本 ${r.remote.version}`);
                           } else toastMsg(`检查失败：${r.message}`);
@@ -838,10 +904,16 @@ export function SettingsPage() {
                     className="btn ghost"
                     type="button"
                     onClick={() => {
-                      if (confirm("恢复全部默认设置？")) {
-                        s.reset();
-                        toastMsg("已恢复默认设置");
-                      }
+                      void askConfirm("恢复默认设置", {
+                        message: "全部设置将恢复为默认值（API Key 也会被清除）。",
+                        danger: true,
+                        okLabel: "恢复默认",
+                      }).then((ok) => {
+                        if (ok) {
+                          s.reset();
+                          toastMsg("已恢复默认设置");
+                        }
+                      });
                     }}
                   >
                     恢复默认设置

@@ -172,12 +172,12 @@ export function applyThemeCssVars(opts: {
   // Floating menus sit ON chrome — slightly lower alpha + blur
   const popA = Math.max(0.32, Math.min(0.82, a * 0.7));
   root.style.setProperty("--popover", `oklch(0.20 ${chroma} ${accentHue} / ${popA})`);
-  // Shell region uses the SAME fill as chrome (--bg)
-  root.style.setProperty("--term-bg", `oklch(0.16 ${chroma} ${accentHue} / ${a})`);
+  // Shell region paints the PRESET terminal background (translucent per UI
+  // opacity) — this is what makes each theme preset's termBg actually visible.
+  root.style.setProperty("--term-bg", colorWithAlpha(termBg, a));
   root.style.setProperty("--term-bg-solid", termBg);
   root.style.setProperty("--term-fg", termFg);
   root.style.setProperty("--term-bg-alpha", String(a));
-  void termBg;
   try {
     window.dispatchEvent(
       new CustomEvent("sw:ui-opacity", {
@@ -187,5 +187,4 @@ export function applyThemeCssVars(opts: {
   } catch {
     /* ignore */
   }
-  void material;
 }

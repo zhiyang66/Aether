@@ -9,6 +9,7 @@ import {
 } from "../../lib/agentTasks";
 import { findLeaf } from "../../lib/layout";
 import { useWorkbenchStore } from "../../store/workbenchStore";
+import { askConfirm } from "../../components/AppDialog";
 
 /** Prefer suggested serial if still open; always insert into current focus afterwards. */
 function focusSuggestedSerial(serial: number | undefined): void {
@@ -115,11 +116,16 @@ export function TaskPanel({
                   type="button"
                   className="btn"
                   onClick={() => {
-                    if (confirm("删除此任务？")) {
-                      deleteTask(active.id);
-                      toastMsg("任务已删除");
-                      reload();
-                    }
+                    void askConfirm("删除此任务？", {
+                      danger: true,
+                      okLabel: "删除",
+                    }).then((ok) => {
+                      if (ok) {
+                        deleteTask(active.id);
+                        toastMsg("任务已删除");
+                        reload();
+                      }
+                    });
                   }}
                 >
                   删除

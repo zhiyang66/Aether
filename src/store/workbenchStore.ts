@@ -17,7 +17,7 @@ import {
 } from "../lib/layout";
 import { defaultShellForPlatform, promptText } from "../lib/shells";
 import { nextId } from "../lib/ids";
-import { mockRunCommand } from "../lib/mockShell";
+import { mockRunCommand, resolveMockCwd } from "../lib/mockShell";
 import type { ScannedShellProfile } from "../lib/shellProfile";
 import { useShellCatalogStore } from "./shellCatalogStore";
 import {
@@ -26,7 +26,7 @@ import {
   saveAgentSessions,
   saveTerminalSession,
 } from "./persist";
-import { isDangerousCommand } from "../lib/danger";
+import { resolveDangerAction } from "../lib/danger";
 import { appendPaneOutput, clearPaneOutput, setPaneOutputBanner } from "../lib/paneRegistry";
 import { captureSnapshots } from "../lib/outputSnapshot";
 import { ptyWrite } from "../ipc/pty";
@@ -149,7 +149,6 @@ type WorkbenchState = {
   saveWorkspace: (name: string) => void;
   switchWorkspace: (id: string) => void;
   listWorkspaces: () => { id: string; name: string }[];
-  deleteWorkspaceById: (id: string) => void;
 
   // agent chat
   newAgentSession: () => void;
@@ -187,6 +186,29 @@ function stripRuntime(node: LayoutNode): LayoutNode {
     a: stripRuntime(node.a),
     b: stripRuntime(node.b),
   };
+}
+
+/** Strip runtime PTY handles from every tab (persist/export/import boundaries). */
+function stripTabsRuntime(tabs: Tab[]): Tab[] {
+  return tabs.map((t) => ({ ...t, layout: stripRuntime(t.layout) }));
+}
+
+/**
+ * Release PTY + xterm sessions for every leaf in the given layouts.
+ * Must be called whenever a layout is discarded wholesale (close tab,
+ * apply template, switch workspace, import) — otherwise shell processes
+ * leak and stale sessions can become Agent write targets.
+ */
+function disposeLayoutSessions(layouts: Array<LayoutNode | null | undefined>) {
+  const paneIds = new Set<string>();
+  for (const layout of layouts) {
+    if (!layout) continue;
+    for (const leaf of collectLeaves(layout)) paneIds.add(leaf.id);
+  }
+  if (!paneIds.size) return;
+  void import("../features/terminal/XtermHost").then(({ disposePaneSession }) => {
+    for (const id of paneIds) void disposePaneSession(id);
+  });
 }
 
 function genPane(
@@ -307,23 +329,54 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
           activeTabId: tab.id,
           activePaneId: pane.id,
         });
+        // startupCmd must also run for the bootstrap-created first tab (mock path;
+        // real PTY runs it in XtermHost after session start)
+        const startup = settings.startupCmd?.trim();
+        if (startup && get().useMockTerminal) {
+          window.setTimeout(() => {
+            get().runCommand(pane.id, startup);
+          }, 0);
+        }
       }
 
-      // Always start Agent with a fresh empty session on launch
-      // (history remains in storage for history panel; not auto-restored as active)
+      // Agent sessions: restoreAgentSession=true resumes the last active
+      // session; otherwise start with a fresh empty one (history stays listed)
       const modelForSession =
         get().aiModel || useSettingsStore.getState().aiDefaultModelId;
-      const fresh = emptyAgentSession(modelForSession, get().aiEffort);
       const prev = loadAgentSessions();
       const kept = (prev?.sessions || [])
         .filter((s) => s.messages.some((m) => m.role === "user"))
         .slice(0, 40);
-      set({
-        agentSessions: [fresh, ...kept],
-        activeAgentSessionId: fresh.id,
-        agentBusy: false,
-        agentStreamId: null,
-      });
+      const wantRestore = useSettingsStore.getState().restoreAgentSession;
+      const restored = wantRestore
+        ? kept.find((s) => s.id === prev?.activeId) || kept[0]
+        : undefined;
+      if (restored) {
+        set({
+          agentSessions: kept,
+          activeAgentSessionId: restored.id,
+          agentBusy: false,
+          agentStreamId: null,
+        });
+      } else {
+        const fresh = emptyAgentSession(modelForSession, get().aiEffort);
+        set({
+          agentSessions: [fresh, ...kept],
+          activeAgentSessionId: fresh.id,
+          agentBusy: false,
+          agentStreamId: null,
+        });
+      }
+
+      // Sync maximized flag with the actual OS window state (was hardcoded true)
+      void (async () => {
+        const { winIsMaximized } = await import("../lib/window");
+        try {
+          set({ windowMaximized: await winIsMaximized() });
+        } catch {
+          /* keep default */
+        }
+      })();
 
       // Re-fetch model list on launch when endpoint is configured
       void refreshModelsOnBootstrap();
@@ -466,11 +519,16 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
     closeTab: (tabId) => {
       const s = get();
       const settings = useSettingsStore.getState();
+      const closing = s.tabs.find((t) => t.id === tabId);
+      // Maximized focus keeps the full layout in backup — those panes must die too
+      const closingBackup =
+        tabId === s.activeTabId && s.focusMaximized ? s.layoutBackup : null;
       if (s.tabs.length <= 1) {
         if (settings.lastTabAction === "close") {
           get().requestAppClose();
           return;
         }
+        disposeLayoutSessions([closing?.layout, closingBackup]);
         // 新建会话：优先扫描结果默认 profile
         const prof = useShellCatalogStore.getState().defaultProfile();
         const shellKey = prof?.shellKey || settings.defaultShell || defaultShellForPlatform();
@@ -483,12 +541,25 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
           layout: pane,
           activePaneId: pane.id,
         };
-        set({ tabs: [tab], activeTabId: tab.id, activePaneId: pane.id });
+        set({
+          tabs: [tab],
+          activeTabId: tab.id,
+          activePaneId: pane.id,
+          focusMaximized: false,
+          layoutBackup: null,
+        });
+        const startup = settings.startupCmd?.trim();
+        if (startup && get().useMockTerminal) {
+          window.setTimeout(() => {
+            get().runCommand(pane.id, startup);
+          }, 0);
+        }
         get().toastMsg("已新建默认会话");
         return;
       }
       const idx = s.tabs.findIndex((t) => t.id === tabId);
       if (idx < 0) return;
+      disposeLayoutSessions([closing?.layout, closingBackup]);
       const tabs = s.tabs.filter((t) => t.id !== tabId);
       let activeTabId = s.activeTabId;
       let activePaneId = s.activePaneId;
@@ -497,7 +568,12 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
         activeTabId = next.id;
         activePaneId = next.activePaneId;
       }
-      set({ tabs, activeTabId, activePaneId });
+      set({
+        tabs,
+        activeTabId,
+        activePaneId,
+        ...(closingBackup ? { focusMaximized: false, layoutBackup: null } : {}),
+      });
     },
 
     setActiveTab: (tabId) => {
@@ -626,6 +702,22 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
       const cmdHistory = cmd.trim() ? [...pane.cmdHistory, cmd] : pane.cmdHistory;
 
       if (get().useMockTerminal) {
+        // Mock `cd`: update pane.cwd so the header/statusbar stay honest
+        const cdMatch = cmd.trim().match(/^cd(?:\s+(.*))?$/i);
+        if (cdMatch !== null) {
+          const newCwd = resolveMockCwd(pane.cwd, cdMatch[1] || "", pane.shellKey);
+          appendPaneOutput(paneId, prompt + "\n");
+          const layout = updateLeaf(tab.layout, paneId, (leaf) => ({
+            ...leaf,
+            cwd: newCwd,
+            history,
+            cmdHistory,
+            histIdx: -1,
+            draft: "",
+          }));
+          set({ tabs: get().tabs.map((t) => (t.id === tab.id ? { ...t, layout } : t)) });
+          return;
+        }
         const mk = mockShellKey(pane.shellKey);
         const meta = shellMeta(pane.shellKey);
         const results = mockRunCommand(mk, cmd);
@@ -737,22 +829,14 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
       // re-read after focus (same reference usually)
       pane = get().resolveSerial(pane.serial) || get().activePane() || pane;
 
-      // Exec mode + danger policy
-      // - insert: never auto-run
-      // - confirm: dangerous → insert only + warn (no WebView-freezing modal)
-      // - auto: run always; still warn on dangerous if confirmDanger
+      // Exec mode + danger policy — shared with tool loop via resolveDangerAction
       let shouldRun = run;
       if (run) {
-        if (settings.execMode === "insert") {
-          shouldRun = false;
-        } else if (settings.execMode === "confirm" && settings.confirmDanger && isDangerousCommand(cmd)) {
-          shouldRun = false;
+        const decision = resolveDangerAction(cmd, settings, true);
+        shouldRun = decision.run;
+        if (decision.note === "danger-insert") {
           get().toastMsg("⚠ 危险命令 · 已改为仅插入，请在终端确认后手动回车");
-        } else if (
-          settings.execMode === "auto" &&
-          settings.confirmDanger &&
-          isDangerousCommand(cmd)
-        ) {
+        } else if (decision.note === "danger-auto-run") {
           get().toastMsg("⚠ 危险命令 · 已按自动模式执行");
         }
       }
@@ -879,11 +963,17 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
     requestAppClose: () => {
       const s = get();
       const settings = useSettingsStore.getState();
-      // Non-blocking: multi-tab close proceeds; toast only (confirm dialog freezes WebView)
-      if (settings.confirmMultiTabClose && s.tabs.length > 1) {
-        get().toastMsg(`正在关闭 · ${s.tabs.length} 个标签`);
-      }
       void (async () => {
+        // In-app dialog (askConfirm) is non-blocking — safe in the WebView
+        if (settings.confirmMultiTabClose && s.tabs.length > 1) {
+          const { askConfirm } = await import("../components/AppDialog");
+          const ok = await askConfirm("关闭窗口", {
+            message: `当前有 ${s.tabs.length} 个标签，全部会话将结束。确定关闭？`,
+            danger: true,
+            okLabel: "关闭",
+          });
+          if (!ok) return;
+        }
         const { winClose } = await import("../lib/window");
         await winClose();
       })();
@@ -928,8 +1018,13 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
         try {
           const data = parseExport(raw);
           if (data.terminal?.tabs?.length) {
+            const cur = get();
+            disposeLayoutSessions([
+              ...cur.tabs.map((t) => t.layout),
+              cur.focusMaximized ? cur.layoutBackup : null,
+            ]);
             set({
-              tabs: data.terminal.tabs,
+              tabs: stripTabsRuntime(data.terminal.tabs),
               activeTabId: data.terminal.activeTabId,
               activePaneId: data.terminal.activePaneId,
               nextSerial: data.terminal.nextSerial || get().nextSerial,
@@ -993,6 +1088,10 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
         }
         const tab = get().activeTab();
         if (!tab) return;
+        disposeLayoutSessions([
+          tab.layout,
+          get().focusMaximized ? get().layoutBackup : null,
+        ]);
         const settings = useSettingsStore.getState();
         const meta = shellMeta(tab.shellKey);
         const baseKey = mockShellKey(tab.shellKey);
@@ -1027,9 +1126,14 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
     saveCurrentAsTemplate: (name) => {
       const tab = get().activeTab();
       if (!tab) return;
-      void import("../lib/customTemplates").then(({ addCustomTemplate }) => {
+      void import("../lib/customTemplates").then(({ addCustomTemplate, loadCustomTemplates }) => {
+        const atCap = loadCustomTemplates().length >= 30;
         const tpl = addCustomTemplate(name, tab.layout);
-        get().toastMsg(`已保存布局模板 · ${tpl.name}`);
+        get().toastMsg(
+          atCap
+            ? `已保存模板 · ${tpl.name}（已达 30 个上限，最旧模板被移除）`
+            : `已保存布局模板 · ${tpl.name}`,
+        );
       });
     },
 
@@ -1042,6 +1146,10 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
         }
         const tab = get().activeTab();
         if (!tab) return;
+        disposeLayoutSessions([
+          tab.layout,
+          get().focusMaximized ? get().layoutBackup : null,
+        ]);
         let ser = 1;
         const built = rehydrateLayout(tpl.layout, () => nextId("pane"), () => ser++);
         const tabs = get().tabs.map((x) =>
@@ -1077,7 +1185,7 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
           defaultShell: settings.defaultShell,
           defaultCwd: settings.cwd,
           defaultModelId: settings.aiDefaultModelId || s.aiModel,
-          tabs: s.tabs,
+          tabs: stripTabsRuntime(s.tabs),
           activeTabId: s.activeTabId,
           activePaneId: s.activePaneId,
           nextSerial: s.nextSerial,
@@ -1096,8 +1204,13 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
           get().toastMsg("工作区不存在");
           return;
         }
+        const cur = get();
+        disposeLayoutSessions([
+          ...cur.tabs.map((t) => t.layout),
+          cur.focusMaximized ? cur.layoutBackup : null,
+        ]);
         set({
-          tabs: ws.tabs,
+          tabs: stripTabsRuntime(ws.tabs),
           activeTabId: ws.activeTabId,
           activePaneId: ws.activePaneId,
           nextSerial: ws.nextSerial,
@@ -1124,13 +1237,6 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
       } catch {
         return [];
       }
-    },
-
-    deleteWorkspaceById: (id) => {
-      void import("../lib/workspace").then(({ deleteWorkspace }) => {
-        deleteWorkspace(id);
-        get().toastMsg("工作区已删除");
-      });
     },
 
     newAgentSession: () => {

@@ -7,6 +7,7 @@ import {
   setExtensionEnabled,
 } from "../../lib/extensions";
 import { useWorkbenchStore } from "../../store/workbenchStore";
+import { askConfirm } from "../../components/AppDialog";
 
 export function ExtensionsPanel() {
   const [list, setList] = useState<ExtensionManifest[]>([]);
@@ -93,10 +94,15 @@ export function ExtensionsPanel() {
                 type="button"
                 className="btn"
                 onClick={() => {
-                  if (confirm(`移除扩展「${e.name}」？`)) {
-                    removeExtension(e.id);
-                    reload();
-                  }
+                  void askConfirm(`移除扩展「${e.name}」？`, {
+                    danger: true,
+                    okLabel: "移除",
+                  }).then((ok) => {
+                    if (ok) {
+                      removeExtension(e.id);
+                      reload();
+                    }
+                  });
                 }}
               >
                 移除

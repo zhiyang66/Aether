@@ -4,7 +4,8 @@ import { useWorkbenchStore } from "../store/workbenchStore";
 import { useSettingsStore } from "../store/settingsStore";
 import { shellMeta, collectLeaves } from "../lib/layout";
 import { allExtensionCommands, ensureExampleExtension } from "../lib/extensions";
-import { loadCustomTemplates } from "../lib/customTemplates";
+import { askConfirm, askPrompt } from "./AppDialog";
+import { deleteCustomTemplate, loadCustomTemplates } from "../lib/customTemplates";
 import { useShellCatalogStore } from "../store/shellCatalogStore";
 
 type Item = {
@@ -57,6 +58,10 @@ export function CommandPalette({
         label: "聚焦 Agent（工作台中枢）",
         hint: "推荐",
         run: () => {
+          if (!useSettingsStore.getState().aiEnabled) {
+            toastMsg("Agent 已在设置中停用 · 请到 设置 → Agent 启用");
+            return;
+          }
           setAiOpen(true);
           window.setTimeout(() => {
             document.getElementById("ai-input")?.focus();
@@ -139,15 +144,6 @@ export function CommandPalette({
           toastMsg(`主题 · ${next}`);
         },
       },
-      {
-        id: "toggle-mock",
-        label: "切换模拟终端 / 真 PTY 标记",
-        hint: "开发",
-        run: () => {
-          useWorkbenchStore.setState((s) => ({ useMockTerminal: !s.useMockTerminal }));
-          toastMsg("已切换终端模式（需重建窗格生效）");
-        },
-      },
       ...shellProfiles.map((p) => ({
         id: `tab-${p.id}`,
         label: `新建标签 · ${p.name}`,
@@ -172,15 +168,36 @@ export function CommandPalette({
         id: "tpl-save",
         label: "保存当前布局为模板…",
         run: () => {
-          const name = window.prompt("模板名称", "我的布局");
-          if (name) saveCurrentAsTemplate(name);
+          void askPrompt("保存布局模板", {
+            message: "输入模板名称",
+            defaultValue: "我的布局",
+          }).then((name) => {
+            if (name) saveCurrentAsTemplate(name);
+          });
         },
       },
-      ...loadCustomTemplates().map((t) => ({
-        id: `ctpl-${t.id}`,
-        label: `自定义模板 · ${t.name}`,
-        run: () => applyCustomTemplate(t.id),
-      })),
+      ...loadCustomTemplates().flatMap((t) => [
+        {
+          id: `ctpl-${t.id}`,
+          label: `自定义模板 · ${t.name}`,
+          run: () => applyCustomTemplate(t.id),
+        },
+        {
+          id: `ctpl-del-${t.id}`,
+          label: `删除自定义模板 · ${t.name}`,
+          run: () => {
+            void askConfirm(`删除模板「${t.name}」？`, {
+              danger: true,
+              okLabel: "删除",
+            }).then((ok) => {
+              if (ok) {
+                deleteCustomTemplate(t.id);
+                toastMsg(`已删除模板 · ${t.name}`);
+              }
+            });
+          },
+        },
+      ]),
       ...(() => {
         ensureExampleExtension();
         return allExtensionCommands().map((c) => ({
@@ -197,8 +214,12 @@ export function CommandPalette({
         id: "ws-save",
         label: "保存当前为工作区…",
         run: () => {
-          const name = window.prompt("工作区名称", "我的项目");
-          if (name) saveWorkspace(name);
+          void askPrompt("保存工作区", {
+            message: "输入工作区名称",
+            defaultValue: "我的项目",
+          }).then((name) => {
+            if (name) saveWorkspace(name);
+          });
         },
       },
       ...listWorkspaces().map((w) => ({

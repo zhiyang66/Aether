@@ -490,13 +490,13 @@
       margin-left: 4px;
     }
 
-    /* Terminal panes — same translucent fill as titlebar/chrome (not a black slab). */
+    /* Terminal panes — preset terminal background (translucent per UI opacity). */
     .panes {
       flex: 1;
       display: flex;
       min-height: 0;
       min-width: 0;
-      background: var(--bg);
+      background: var(--term-bg, var(--bg));
     }
     .split-group {
       flex: 1 1 0;
