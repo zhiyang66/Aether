@@ -19,7 +19,7 @@ description: 所有可调用工具的清单：终端、布局、工作区、设�
 - **workspace** — 工作区 list/save/switch
 
 **应用控制（几乎覆盖设置里的一切）**
-- **app_query** — 只读查询现状：domain=settings|mcp|hosts|snippets|approval|recording|broadcast|extensions（改之前先查）
+- **app_query** — 只读查询现状：domain=settings|mcp|hosts|snippets|approval|recording|broadcast（改之前先查）
 - **app_settings** — 改设置（写入 ~/.aether/config.json，以文件为准）：主题/不透明度/字号/字体/光标/色相/上下文/通知/联想/历史/快照/项目上下文，以及 exec_mode / AI 提供方 / 端点 / **API Key** / 默认模型等，可完整操作配置
 - **mcp_manage** — MCP server：add|connect|disconnect|enable|disable|delete
 - **hosts_manage** — SSH 主机：add|connect|delete

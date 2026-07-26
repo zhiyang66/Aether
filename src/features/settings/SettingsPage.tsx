@@ -9,7 +9,6 @@ import { clearHistory } from "../../lib/commandHistory";
 import { isTauri, winToggleMaximize } from "../../lib/window";
 import { THEME_PRESETS } from "../../lib/themes";
 import { WorkspacePanel } from "./WorkspacePanel";
-import { ExtensionsPanel } from "./ExtensionsPanel";
 import { SnippetsPanel } from "./SnippetsPanel";
 import { ApprovalPanel } from "./ApprovalPanel";
 import { McpPanel } from "./McpPanel";
@@ -34,7 +33,6 @@ type PanelId =
   | "approval"
   | "mcp"
   | "skills"
-  | "extensions"
   | "completion"
   | "snippets"
   | "shortcuts"
@@ -50,7 +48,6 @@ const NAV: { id: PanelId; label: string; group: string }[] = [
   { id: "approval", label: "审批", group: "智能" },
   { id: "mcp", label: "MCP", group: "智能" },
   { id: "skills", label: "Skill", group: "智能" },
-  { id: "extensions", label: "扩展", group: "智能" },
   { id: "completion", label: "命令联想", group: "输入" },
   { id: "snippets", label: "命令片段", group: "输入" },
   { id: "shortcuts", label: "快捷键", group: "系统" },
@@ -542,16 +539,6 @@ export function SettingsPage() {
                 </p>
               </div>
               <SkillsPanel />
-            </section>
-          )}
-
-          {panel === "extensions" && (
-            <section className="panel active">
-              <div className="panel-header">
-                <h1>扩展</h1>
-                <p>本地 JSON 扩展：命令面板项与 Agent 提示片段。</p>
-              </div>
-              <ExtensionsPanel />
             </section>
           )}
 

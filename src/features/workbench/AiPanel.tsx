@@ -15,7 +15,6 @@ import {
   type AgentAction,
 } from "../../lib/agentActions";
 import { splitAgentReply } from "../../lib/agentReply";
-import { agentSystemFromExtensions, ensureExampleExtension } from "../../lib/extensions";
 import {
   createTask,
   formatActiveTaskPrompt,
@@ -428,7 +427,6 @@ export function AiPanel() {
     if (endpoint && model && isTauri()) {
       const streamId = nextId("stream");
       setAgentStreamId(streamId);
-      ensureExampleExtension();
 
       // Listener FIRST: tool-loop rounds stream text/thinking under this id.
       // ("done" only arrives from the plain-stream fallback path.)
@@ -500,7 +498,6 @@ export function AiPanel() {
       const system = [
         AGENT_BASE_PROMPT,
         formatAgentSkillsPrompt(),
-        agentSystemFromExtensions(),
         formatActiveTaskPrompt(),
         projectCtx,
         "注意：终端上下文可能已截断并脱敏（密钥类字段显示为 ***REDACTED***）。",

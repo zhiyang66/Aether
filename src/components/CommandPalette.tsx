@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { useWorkbenchStore } from "../store/workbenchStore";
 import { useSettingsStore, exportSettingsJson } from "../store/settingsStore";
 import { shellMeta, collectLeaves } from "../lib/layout";
-import { allExtensionCommands, ensureExampleExtension } from "../lib/extensions";
 import { askConfirm, askPrompt } from "./AppDialog";
 import { deleteCustomTemplate, loadCustomTemplates } from "../lib/customTemplates";
 import { useShellCatalogStore } from "../store/shellCatalogStore";
@@ -240,18 +239,6 @@ export function CommandPalette({
           hint: s.template.length > 32 ? `${s.template.slice(0, 30)}…` : s.template,
           run: () => {
             void insertSnippetInteractive(s, insertToPane);
-          },
-        }));
-      })(),
-      ...(() => {
-        ensureExampleExtension();
-        return allExtensionCommands().map((c) => ({
-          id: `ext-${c.id}`,
-          label: c.label,
-          run: () => {
-            if (c.runCommand) insertToPane(undefined, c.runCommand, true);
-            else if (c.insertText) insertToPane(undefined, c.insertText, false);
-            else toastMsg("扩展命令无内容");
           },
         }));
       })(),

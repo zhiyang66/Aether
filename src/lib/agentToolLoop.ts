@@ -415,7 +415,6 @@ export const AGENT_TOOLS_OPENAI = [
               "approval",
               "recording",
               "broadcast",
-              "extensions",
             ],
             description: "要查询的领域",
           },
@@ -1462,12 +1461,6 @@ export async function executeAgentTool(
         ok: true,
         result: serials.length ? `广播开启中: ${serials.map((n) => `#${n}`).join(" ")}` : "广播未开启",
       };
-    }
-    if (domain === "extensions") {
-      const { loadExtensions, enabledExtensions } = await import("./extensions");
-      const on = new Set(enabledExtensions().map((e) => e.id));
-      const rows = loadExtensions().map((e) => `${on.has(e.id) ? "✓" : "○"} ${e.name}`);
-      return { ok: true, result: rows.length ? rows.join("\n") : "（无扩展）" };
     }
     return { ok: false, result: `未知 domain: ${domain}` };
   }
