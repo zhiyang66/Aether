@@ -24,6 +24,23 @@ export default function App() {
     void scanShells();
   }, [load, loadFromDisk, scanShells]);
 
+  // Suppress webview/browser shortcuts the app doesn't use (Ctrl+P print,
+  // Ctrl+S save-page, Ctrl+F find bar, Ctrl+O/J/U/G). This is a React SPA in a
+  // webview, so these would otherwise pop the browser's own UI. preventDefault
+  // only cancels the browser's action — the terminal still receives the key
+  // (xterm's own keydown handler runs before this bubble listener), so shell
+  // bindings like Ctrl+F (forward-char) / Ctrl+P (history) keep working.
+  useEffect(() => {
+    const BLOCK = new Set(["p", "s", "o", "j", "u", "g", "f"]);
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod || e.altKey || e.shiftKey) return;
+      if (BLOCK.has(e.key.toLowerCase())) e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <ErrorBoundary>
       <BrowserRouter>

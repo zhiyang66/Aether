@@ -51,6 +51,7 @@ export function CommandPalette({
   const nav = useNavigate();
   const [q, setQ] = useState("");
   const [idx, setIdx] = useState(0);
+  const [tab, setTab] = useState<"builtin" | "snippets">("builtin");
   const createTabFromProfile = useWorkbenchStore((s) => s.createTabFromProfile);
   const addPane = useWorkbenchStore((s) => s.addPane);
   const shellProfiles = useShellCatalogStore((s) => s.profiles);
@@ -76,7 +77,7 @@ export function CommandPalette({
   const listWorkspaces = useWorkbenchStore((s) => s.listWorkspaces);
   const insertToPane = useWorkbenchStore((s) => s.insertToPane);
 
-  const items: Item[] = useMemo(() => {
+  const builtinItems: Item[] = useMemo(() => {
     // Closed palette needs no items; skip the localStorage reads + layout walk.
     if (!open) return [];
     const list: Item[] = [
@@ -230,18 +231,6 @@ export function CommandPalette({
           },
         },
       ]),
-      ...(() => {
-        const st = useWorkbenchStore.getState();
-        const shellKey = st.activePane()?.shellKey || "ps";
-        return snippetsForShell(shellKey).map((s) => ({
-          id: `snip-${s.id}`,
-          label: `片段 · ${s.name}`,
-          hint: s.template.length > 32 ? `${s.template.slice(0, 30)}…` : s.template,
-          run: () => {
-            void insertSnippetInteractive(s, insertToPane);
-          },
-        }));
-      })(),
       {
         id: "rec-toggle",
         label: "录制当前窗格 · 开始/停止",
@@ -406,24 +395,41 @@ export function CommandPalette({
     insertToPane,
   ]);
 
+  // User-defined command snippets live in their own tab.
+  const snippetItems: Item[] = useMemo(() => {
+    if (!open) return [];
+    const shellKey = useWorkbenchStore.getState().activePane()?.shellKey || "ps";
+    return snippetsForShell(shellKey).map((s) => ({
+      id: `snip-${s.id}`,
+      label: s.name,
+      hint: s.template.length > 40 ? `${s.template.slice(0, 38)}…` : s.template,
+      run: () => {
+        void insertSnippetInteractive(s, insertToPane);
+      },
+    }));
+  }, [open, insertToPane]);
+
+  const activeItems = tab === "snippets" ? snippetItems : builtinItems;
+
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
-    if (!qq) return items;
-    return items.filter(
+    if (!qq) return activeItems;
+    return activeItems.filter(
       (i) => i.label.toLowerCase().includes(qq) || (i.hint && i.hint.toLowerCase().includes(qq)),
     );
-  }, [items, q]);
+  }, [activeItems, q]);
 
   useEffect(() => {
     if (open) {
       setQ("");
       setIdx(0);
+      setTab("builtin");
     }
   }, [open]);
 
   useEffect(() => {
     setIdx(0);
-  }, [q]);
+  }, [q, tab]);
 
   if (!open) return null;
 
@@ -435,16 +441,41 @@ export function CommandPalette({
       }}
     >
       <div className="cmd-palette" role="dialog" aria-label="命令面板">
+        <div className="cmd-palette-tabs" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "builtin"}
+            className={`cmd-palette-tab${tab === "builtin" ? " active" : ""}`}
+            onClick={() => setTab("builtin")}
+          >
+            内置命令 <span className="cmd-tab-count">{builtinItems.length}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "snippets"}
+            className={`cmd-palette-tab${tab === "snippets" ? " active" : ""}`}
+            onClick={() => setTab("snippets")}
+          >
+            命令片段 <span className="cmd-tab-count">{snippetItems.length}</span>
+          </button>
+          <kbd className="cmd-tab-hint">Tab 切换</kbd>
+        </div>
         <input
           className="cmd-palette-input"
           autoFocus
-          placeholder="输入命令…（Ctrl+Shift+P）"
+          placeholder={tab === "snippets" ? "搜索命令片段…" : "输入命令…（Ctrl+Shift+P）"}
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Escape") {
               e.preventDefault();
               onClose();
+            }
+            if (e.key === "Tab") {
+              e.preventDefault();
+              setTab((t) => (t === "builtin" ? "snippets" : "builtin"));
             }
             if (e.key === "ArrowDown") {
               e.preventDefault();
@@ -466,7 +497,11 @@ export function CommandPalette({
         />
         <div className="cmd-palette-list">
           {filtered.length === 0 && (
-            <div className="cmd-palette-empty">无匹配命令</div>
+            <div className="cmd-palette-empty">
+              {tab === "snippets" && snippetItems.length === 0
+                ? "暂无命令片段 · 到 设置 → 命令片段 添加，或让 Agent 建"
+                : "无匹配命令"}
+            </div>
           )}
           {filtered.map((item, i) => (
             <button
