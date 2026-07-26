@@ -25,15 +25,16 @@
 - **命令块（OSC 133）**：Shell 集成随会话注入（pwsh / bash / zsh，对用户不可见），每条命令结构化为块——命令、退出码、耗时、cwd；失败块红色标线；窗格头块列表可跳转 / 复制命令 / 复制输出 / 重跑 / AI 诊断；`Ctrl+Alt+↑/↓` 块间跳转
 - **缓冲区搜索**：`Ctrl+Shift+F`
 - **完成通知**：长命令在窗口未聚焦时结束 → 系统通知（阈值可配）
-- **命令历史与联想**：历史 / 常用命令浮层；命令片段（Snippets）带参数模板
-- **命令面板**：`Ctrl+Shift+P`；布局模板、工作区、录制、片段全部可达
+- **命令历史与联想**：历史 / 常用命令浮层；命令片段（Snippets）带参数模板（设置页可建，Agent 也可建）
+- **命令面板**：`Ctrl+Shift+P`，双 Tab（**内置命令** / **命令片段**）；布局模板、工作区、录制、片段全部可达
 - **会话录制回放**：录制为 asciinema cast v2（Rust 侧落盘），应用内回放（进度 / 倍速）
 - **SSH 主机**：以系统 `ssh` 为内核的主机管理（端口 / 用户 / 私钥 / 跳板机），主机即 Shell 配置；支持从 `~/.ssh/config` 导入
 
 ### Agent（核心）
 
 - **流式工具内核**：OpenAI 兼容与 Anthropic 原生双协议；文本 / 思维链流式渲染，工具调用可中途取消（`/stop`）
-- **工作台工具组**：读窗格（支持按命令块取上下文）、执行命令（可等待真实退出码）、分屏 / 标签 / 布局 / 工作区 / 设置
+- **万能工具组**：读窗格 / 执行命令、分屏 / 标签 / 布局 / 工作区；`app_query` / `app_settings`（含主题、执行模式、API Key 等，写入 `~/.aether/config.json`）；`mcp_manage` / `hosts_manage` / `snippet_manage` / `skill_manage` / `recording` / `broadcast`
+- **内置 Skill（文件标准）**：能力简报以 `~/.aether/skills/<id>/SKILL.md` 存放（YAML frontmatter + markdown）；首次运行播种内置，用户与 Agent（`skill_manage`）均可增删改；设置 → Skill 列表可见
 - **任务自治**：`task_create` 规划 → `run_command(wait_for_exit)` 执行 → 按退出码 `task_update_step` 推进；任务面板实时监督（暂停推进 / 跳转命令块 / 重试）
 - **MCP 客户端**：连接 Model Context Protocol server（stdio 本地进程 / streamable HTTP），其工具以 `mcp__server__tool` 命名空间进入 Agent 工具表；调用超时与输出上限保护
 - **分级审批**：保守 / 平衡 / 放手三档预设 + 规则（工具 / 命令通配 / MCP server）；每次系统级操作弹窗「允许一次 / 总是允许 / 拒绝」，危险命令强制升级询问；「总是允许」写入的规则可见可撤销
@@ -99,11 +100,12 @@ src/                    前端（React）
   components/           命令面板、审批弹窗、回放器、Toast 等
   features/workbench/   标签 / 分屏 / Agent 面板 / 状态栏
   features/terminal/    XtermHost · 行内 Ctrl+K · 会话注册表
-  features/settings/    设置各面板（Agent / 审批 / MCP / SSH / 片段…）
+  features/settings/    设置各面板（Agent / 审批 / MCP / Skill / SSH / 片段…）
   features/agent/       任务面板
   ipc/                  Tauri 调用封装
-  lib/                  命令块 / 审批 / 任务 / 片段 / MCP / SSH 等纯逻辑（含单测）
-  store/                Zustand 状态与持久化
+  lib/                  命令块 / 审批 / 任务 / 片段 / MCP / SSH / Skill 等纯逻辑（含单测）
+  store/                Zustand 状态与持久化（设置写穿 ~/.aether/config.json）
+skills/                 内置 Skill 真源（SKILL.md，编译时 include + Vite 回退）
 src-tauri/              Rust 后端
   src/pty_host.rs       PTY 生命周期（+ 录制分流）
   src/shell_scan.rs     Shell 探测
@@ -111,6 +113,7 @@ src-tauri/              Rust 后端
   src/agent_api.rs      Agent HTTP / 流式 / 工具调用（OpenAI 兼容 + Anthropic）
   src/mcp_host.rs       MCP server 运行时（stdio / http）
   src/recorder.rs       asciinema cast v2 录制
+  src/aether.rs         ~/.aether 配置主目录（skills / config.json）
 ```
 
 ---
@@ -157,9 +160,12 @@ npm run dev
 
 ## 配置说明
 
-- **设置页**：常规、Shell 配置、SSH 主机、外观、工作区、Agent、审批、MCP、扩展、命令联想、命令片段、快捷键、关于
-- **敏感数据只存本机**：API Key、SSH 私钥路径、MCP env 均不随工作台导出
-- **Agent**：填写 OpenAI 兼容 Base URL（或 Anthropic 端点）与密钥后拉取模型
+- **配置主目录 `~/.aether/`**（类似 `~/.codex` / `~/.claude`）：
+  - `config.json` — 设置权威源（含主题、字号、Agent 端点 / API Key 等；启动时以文件为准）
+  - `skills/<id>/SKILL.md` — Agent 内置 / 用户 Skill（YAML frontmatter + markdown；首次运行播种内置）
+- **设置页**：常规、Shell 配置、SSH 主机、外观、工作区、Agent、审批、MCP、Skill、命令联想、命令片段、快捷键、关于
+- **敏感数据只存本机**：API Key、SSH 私钥路径、MCP env 均不随「导出设置 / 导出工作台」离开本机（分享路径仍脱敏）
+- **Agent**：填写 OpenAI 兼容 Base URL（或 Anthropic 端点）与密钥后拉取模型；也可让 Agent 通过 `app_settings` 直接写入
 - **审批**：默认「平衡」档——工作台内操作放行、执行命令 / MCP 调用询问；危险命令永远至少询问
 - **更新**：设置 → 关于 配置 version.json 更新源；启动后台静默检查 + 手动检查
 
@@ -167,16 +173,19 @@ npm run dev
 
 ## 质量与范围
 
-- 前端单元测试：`npm test`（Vitest + happy-dom，含命令块 / 审批 / 任务 / 片段 / SSH 参数等）
-- Rust 单元测试：`cargo test --lib`（协议转换 / Shell 注入 / MCP 解析 / 录制格式）
+- 前端单元测试：`npm test`（Vitest + happy-dom，含命令块 / 审批 / 任务 / 片段 / SSH / Skill / 设置合并等）
+- Rust 单元测试：`cargo test --lib`（协议转换 / Shell 注入 / MCP 解析 / 录制格式 / `~/.aether` frontmatter）
 - 门禁：`npm run check`（`tsc` + 测试 + `vite build`）
-- **1.0 明确不做**：SSH 协议自实现、云同步账号、插件市场、系统终端窗体嵌入、自动静默安装更新（更新为提示 + 打开下载页）
+- **1.0 明确不做**：SSH 协议自实现、云同步账号、插件市场、系统终端窗体嵌入、自动静默安装更新（更新为提示 + 打开下载页）、Skill 可视化编辑器
 
 ---
 
 ## 版本与许可
 
 - 版本号以 `package.json` / `src-tauri/tauri.conf.json` 为准（当前 **1.0.0**，应用内「关于」页同步显示）
+- 发布标签：
+  - [`v0.6.0`](https://github.com/zhiyang66/Aether/releases/tag/v0.6.0) — 早期基线
+  - [`v1.0.0`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.0) — 当前稳定版（与 v0.6.0 共存）
 - 仓库许可：见 `src-tauri/Cargo.toml`（MIT）
 
 ---
@@ -185,3 +194,4 @@ npm run dev
 
 - GitHub：<https://github.com/zhiyang66/Aether>
 - Gitee：<https://gitee.com/xxdzzy/Aether>
+- Releases：<https://github.com/zhiyang66/Aether/releases>
