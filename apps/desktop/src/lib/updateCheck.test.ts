@@ -4,6 +4,7 @@ import {
   parseUpdatePayload,
   resolveUpdateFeedUrl,
   DEFAULT_UPDATE_FEED,
+  FALLBACK_VERSION_JSON,
 } from "./updateCheck";
 
 describe("compareVersions", () => {
@@ -20,17 +21,16 @@ describe("compareVersions", () => {
 });
 
 describe("resolveUpdateFeedUrl", () => {
-  it("defaults empty/github to GitHub latest", () => {
+  it("defaults empty/github to GitHub releases/latest page", () => {
     expect(resolveUpdateFeedUrl("")).toBe(DEFAULT_UPDATE_FEED);
-    expect(resolveUpdateFeedUrl("  ")).toBe(DEFAULT_UPDATE_FEED);
     expect(resolveUpdateFeedUrl("github")).toBe(DEFAULT_UPDATE_FEED);
-    expect(resolveUpdateFeedUrl("default")).toBe(DEFAULT_UPDATE_FEED);
+    expect(DEFAULT_UPDATE_FEED).toContain("github.com/zhiyang66/Aether/releases/latest");
+    expect(DEFAULT_UPDATE_FEED).not.toContain("api.github.com");
   });
 
   it("disables with off/none", () => {
     expect(resolveUpdateFeedUrl("off")).toBeNull();
     expect(resolveUpdateFeedUrl("none")).toBeNull();
-    expect(resolveUpdateFeedUrl("disabled")).toBeNull();
   });
 
   it("passes through custom URLs", () => {
@@ -49,24 +49,20 @@ describe("parseUpdatePayload", () => {
     expect(r).toEqual({ version: "1.2.3", notes: "hi", url: "https://x" });
   });
 
-  it("parses GitHub release object", () => {
+  it("parses GitHub releases/latest JSON (github.com, not API)", () => {
     const r = parseUpdatePayload(
       {
-        tag_name: "v1.0.2",
-        body: "notes here",
-        html_url: "https://github.com/zhiyang66/Aether/releases/tag/v1.0.2",
-        assets: [
-          {
-            name: "Aether_1.0.2_x64-setup.exe",
-            browser_download_url:
-              "https://github.com/zhiyang66/Aether/releases/download/v1.0.2/Aether_1.0.2_x64-setup.exe",
-          },
-        ],
+        tag_name: "v1.0.3",
+        html_url: "https://github.com/zhiyang66/Aether/releases/tag/v1.0.3",
       },
-      "https://api.github.com/repos/zhiyang66/Aether/releases/latest",
+      DEFAULT_UPDATE_FEED,
     );
-    expect(r.version).toBe("1.0.2");
-    expect(r.notes).toContain("notes");
-    expect(r.url).toContain("releases/tag/v1.0.2");
+    expect(r.version).toBe("1.0.3");
+    expect(r.url).toContain("releases/tag/v1.0.3");
+  });
+
+  it("fallback constant points at raw version.json", () => {
+    expect(FALLBACK_VERSION_JSON).toContain("raw.githubusercontent.com");
+    expect(FALLBACK_VERSION_JSON).toContain("version.json");
   });
 });

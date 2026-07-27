@@ -268,6 +268,7 @@ const NAV: NavItem[] = [
       "version",
       "update",
       "检查更新",
+      "github",
       "about",
       "release",
       "许可证",
@@ -1243,21 +1244,12 @@ export function SettingsPage() {
               <div className="section">
                 <div className="section-title">更新</div>
                 <div className="card">
-                  <Row
-                    label="更新源 URL"
-                    desc="留空 = 默认 GitHub Releases；填 version.json 地址可自定义；填 off 关闭检查"
-                  >
-                    <input
-                      className="ctrl mono"
-                      value={s.updateFeedUrl}
-                      onChange={(e) => s.patch({ updateFeedUrl: e.target.value })}
-                      placeholder="默认：GitHub zhiyang66/Aether releases/latest"
-                    />
-                  </Row>
                   <div className="row">
                     <div className="row-text">
                       <div className="row-label">检查更新</div>
-                      <div className="row-desc">读取 GitHub 最新 Release · 仅提示，不自动安装</div>
+                      <div className="row-desc">
+                        自动对接 GitHub Releases（zhiyang66/Aether）· 仅提示，不自动安装
+                      </div>
                     </div>
                     <div className="row-control">
                       <button
@@ -1266,9 +1258,9 @@ export function SettingsPage() {
                         onClick={async () => {
                           const r = await checkForUpdate({
                             current: APP_VERSION,
-                            feedUrl: s.updateFeedUrl,
+                            feedUrl: "",
                           });
-                          if (r.status === "disabled") toastMsg("更新检查已关闭（更新源=off）");
+                          if (r.status === "disabled") toastMsg("更新检查不可用");
                           else if (r.status === "up-to-date") toastMsg(`已是最新 · ${r.current}`);
                           else if (r.status === "available") {
                             const go = await askConfirm(`发现新版本 ${r.remote.version}`, {
