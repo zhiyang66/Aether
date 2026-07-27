@@ -15,15 +15,8 @@ import {
   type AgentAction,
 } from "../../lib/agentActions";
 import { splitAgentReply } from "../../lib/agentReply";
-import {
-  createTask,
-  formatActiveTaskPrompt,
-  planFromText,
-  setActiveTask,
-} from "../../lib/agentTasks";
 import { AGENT_BASE_PROMPT, formatAgentSkillsPrompt } from "../../lib/agentPrompt";
 import { findLeaf } from "../../lib/layout";
-import { TaskPanel } from "../agent/TaskPanel";
 import {
   matchSlashCommands,
   slashEnterShouldAccept,
@@ -79,8 +72,6 @@ export function AiPanel() {
   const [menuPanel, setMenuPanel] = useState<"root" | "model" | "effort">("root");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyQuery, setHistoryQuery] = useState("");
-  const [tasksOpen, setTasksOpen] = useState(false);
-  const [taskRefresh, setTaskRefresh] = useState(0);
   const [streamPreview, setStreamPreview] = useState("");
   /** Throttled HTML for live markdown while streaming (raw text still in streamPreview). */
   const [streamHtml, setStreamHtml] = useState("");
@@ -118,19 +109,18 @@ export function AiPanel() {
     setSlashIdx(0);
   }, [input, slashMatches.length]);
 
-  // Esc closes in-panel floats (tasks / history)
+  // Esc closes history float
   useEffect(() => {
-    if (!tasksOpen && !historyOpen) return;
+    if (!historyOpen) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.preventDefault();
       e.stopPropagation();
-      setTasksOpen(false);
       setHistoryOpen(false);
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [tasksOpen, historyOpen]);
+  }, [historyOpen]);
 
   useEffect(() => {
     if (messagesRef.current) {
@@ -561,7 +551,6 @@ export function AiPanel() {
       const system = [
         AGENT_BASE_PROMPT,
         formatAgentSkillsPrompt(),
-        formatActiveTaskPrompt(),
         projectCtx,
         "注意：终端上下文可能已截断并脱敏（密钥类字段显示为 ***REDACTED***）。",
         `标签页数: ${bundle.tabCount}`,
@@ -595,8 +584,7 @@ export function AiPanel() {
           provider: settings.aiProvider,
           model,
           messages: baseMessages,
-          // Active task = plan-execute loop; give the model room to advance steps
-          maxRounds: formatActiveTaskPrompt() ? 12 : 5,
+          maxRounds: 8,
           streamId,
           effort: aiEffort,
           cb: {
@@ -740,42 +728,6 @@ export function AiPanel() {
     }, effortMeta.delay);
   };
 
-  const createTaskFromSlash = (raw: string) => {
-    const body = raw.replace(/^\/task\b\s*/i, "").replace(/^任务[:：]\s*/, "");
-    const lines = body.split(/\n/);
-    const title = (lines[0] || "未命名任务").slice(0, 48) || "未命名任务";
-    const stepSrc = lines.slice(1).join("\n").trim() || body.trim() || title;
-    const steps = planFromText(stepSrc);
-    const task = createTask(
-      title,
-      steps.length ? steps : planFromText(title),
-      useWorkbenchStore.getState().activeAgentSessionId ?? undefined,
-    );
-    setActiveTask(task.id);
-    setTasksOpen(true);
-    setTaskRefresh((n) => n + 1);
-    appendAgentMessage({ role: "user", content: raw.trim() || `/task ${title}` });
-    appendAgentMessage({
-      role: "assistant",
-      content: `已创建任务 ${task.id}`,
-      html: markdownToHtml(
-        `已创建任务 **${task.title}**（${task.steps.length} 步）。\n\n` +
-          task.steps
-            .map(
-              (s, i) =>
-                `${i + 1}. ${s.title}${s.command ? ` → \`${s.command}\`` : ""}${
-                  s.targetSerial != null ? ` (#${s.targetSerial})` : ""
-                }`,
-            )
-            .join("\n") +
-          `\n\n在上方 **任务面板** 中执行 / 跳过。也可继续用自然语言补充步骤。`,
-      ),
-      cmd: task.steps.find((s) => s.command)?.command,
-      targetSerial: task.steps.find((s) => s.command)?.targetSerial,
-    });
-    toastMsg(`任务已创建 · ${task.steps.length} 步`);
-  };
-
   /** Local slash with typed args only. UI buttons cover new/clear/model/stop. */
   const runSlashLocal = (text: string): boolean => {
     const line = text.trim();
@@ -798,11 +750,6 @@ export function AiPanel() {
       } else {
         toastMsg(`未找到窗格 #${serial}`);
       }
-      return true;
-    }
-
-    if (/^\/task\b/i.test(line) || /^任务[:：]/.test(line)) {
-      createTaskFromSlash(line);
       return true;
     }
 
@@ -925,14 +872,9 @@ export function AiPanel() {
       setInput("/focus ");
       return;
     }
-    if (/^\/task\s*$/i.test(text)) {
-      createTaskFromSlash("/task 未命名任务");
-      setInput("");
-      return;
-    }
     // Unknown slash → don't pretend it's a chat message
     if (text.startsWith("/")) {
-      toastMsg("可用 /task、/focus · 其它请用上方按钮");
+      toastMsg("可用 /focus、/stop · 其它请直接对话或用上方按钮");
       return;
     }
 
@@ -966,30 +908,12 @@ export function AiPanel() {
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <button
             type="button"
-            className={`icon-btn${tasksOpen ? " active" : ""}`}
-            title="任务面板"
-            aria-label="任务面板"
-            style={{ width: 28, height: 28, minWidth: 28, minHeight: 28 }}
-            onClick={() => {
-              setTasksOpen((v) => !v);
-              setHistoryOpen(false);
-              setTaskRefresh((n) => n + 1);
-            }}
-          >
-            <svg viewBox="0 0 24 24" width="14" height="14">
-              <rect x="4" y="5" width="16" height="14" rx="2" fill="none" stroke="currentColor" />
-              <path d="M8 9h8M8 12h8M8 15h5" fill="none" stroke="currentColor" />
-            </svg>
-          </button>
-          <button
-            type="button"
             className={`icon-btn${historyOpen ? " active" : ""}`}
             title="历史会话"
             aria-label="历史会话"
             style={{ width: 28, height: 28, minWidth: 28, minHeight: 28 }}
             onClick={() => {
               setHistoryOpen((v) => !v);
-              setTasksOpen(false);
             }}
           >
             <svg viewBox="0 0 24 24" width="14" height="14">
@@ -1053,29 +977,14 @@ export function AiPanel() {
         </div>
       </div>
 
-      {/* Task / history: floating cards inside Agent panel only (not layout push-down) */}
-      {(tasksOpen || historyOpen) && (
+      {/* History float inside Agent panel only */}
+      {historyOpen && (
         <div
           className="ai-float-scrim"
           onMouseDown={() => {
-            setTasksOpen(false);
             setHistoryOpen(false);
           }}
         />
-      )}
-      {tasksOpen && (
-        <div
-          className="ai-float-card ai-float-tasks"
-          role="dialog"
-          aria-label="任务"
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <TaskPanel
-            open={tasksOpen}
-            onClose={() => setTasksOpen(false)}
-            refreshKey={taskRefresh}
-          />
-        </div>
       )}
       {historyOpen && (
         <div
@@ -1164,7 +1073,7 @@ export function AiPanel() {
             Agent 是工作台中枢：可分屏、建标签、跑命令、改主题与设置。
             <br />
             <span style={{ color: "var(--muted)" }}>
-              试试「左右分屏」「清屏」「切换青色主题」· 窗格用 #N · <code>/</code>task
+              试试「左右分屏」「清屏」「切换青色主题」· 窗格用 T1:#1 / #N
             </span>
           </div>
         )}
@@ -1378,7 +1287,7 @@ export function AiPanel() {
             className="ai-input"
             id="ai-input"
             rows={2}
-            placeholder="描述任务… 多步可用 /task · 聚焦窗格 /focus 2"
+            placeholder="直接说需求… 例：在 WSL 里 cd ~ · 聚焦 /focus 2"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {

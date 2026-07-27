@@ -39,12 +39,11 @@ export const PRESET_LABELS: Record<ApprovalPreset, string> = {
 export const READ_ONLY_TOOLS = new Set([
   "list_panes",
   "read_pane",
-  "task_read",
   "app_query",
 ]);
 
 /**
- * Workbench-local operations (layout, tabs, task bookkeeping, app settings):
+ * Workbench-local operations (layout, tabs, app settings):
  * they never touch the system shell, so balanced auto-allows them too.
  * run_command and MCP calls are NOT here — those ask.
  */
@@ -57,9 +56,6 @@ export const LOW_RISK_TOOLS = new Set([
   "apply_layout_template",
   "workspace",
   "app_settings",
-  "task_create",
-  "task_update_step",
-  "task_add_steps",
 ]);
 
 const listeners = new Set<() => void>();

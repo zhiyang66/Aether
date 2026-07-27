@@ -4,17 +4,18 @@ import { matchSlashCommands, slashEnterShouldAccept } from "./agentSlash";
 describe("agentSlash", () => {
   it("exposes composer commands", () => {
     const all = matchSlashCommands("/");
-    expect(all.map((c) => c.cmd).sort()).toEqual(["/focus", "/stop", "/task"]);
+    expect(all.map((c) => c.cmd).sort()).toEqual(["/focus", "/stop"]);
   });
 
   it("filters by prefix", () => {
-    expect(matchSlashCommands("/t").map((c) => c.cmd)).toEqual(["/task"]);
+    expect(matchSlashCommands("/f").map((c) => c.cmd)).toEqual(["/focus"]);
+    expect(matchSlashCommands("/s").map((c) => c.cmd)).toEqual(["/stop"]);
   });
 
-  it("keeps /task while typing title", () => {
-    const m = matchSlashCommands("/task 修 profile");
+  it("keeps /focus while typing args", () => {
+    const m = matchSlashCommands("/focus 2");
     expect(m).toHaveLength(1);
-    expect(m[0].cmd).toBe("/task");
+    expect(m[0].cmd).toBe("/focus");
   });
 
   it("Enter accepts only while completing token", () => {

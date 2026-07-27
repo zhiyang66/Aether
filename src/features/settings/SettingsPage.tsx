@@ -859,7 +859,7 @@ export function SettingsPage() {
                 <h1>Agent</h1>
                 <p>
                   可读全部窗格输出 / 历史 / 输入；按 #N 精准控制分屏。模型列表来自下方
-                  API 端点。任务：对话输入 <code>/task 标题</code> 并换行写步骤。
+                  API 端点。直接对话描述需求即可，Agent 会用工具完成。
                 </p>
               </div>
               <div className="section">
@@ -1234,7 +1234,7 @@ export function SettingsPage() {
                     <dt>支持 Shell</dt>
                     <dd>PowerShell · bash · zsh · cmd · WSL</dd>
                     <dt>Agent</dt>
-                    <dd>按窗格 #序号 · 任务面板 · 扩展 · 会话历史</dd>
+                    <dd>按窗格 T1:#1 / #序号 · 会话历史 · Actions 按钮</dd>
                     <dt>平台</dt>
                     <dd>Windows · macOS · Linux</dd>
                   </dl>

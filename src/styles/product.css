@@ -293,9 +293,8 @@
   background: var(--surface-2);
 }
 
-/* Agent task panel */
+/* Agent task panel — vertical layout for narrow Agent float */
 .task-panel {
-  /* Hosted inside .ai-float-card — fill the float, no layout push-down */
   border: none;
   background: transparent;
   max-height: none;
@@ -304,29 +303,55 @@
   flex-direction: column;
   min-height: 0;
   flex: 1;
+  overflow: hidden;
 }
 
 .task-panel-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
+  gap: 8px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   font-size: 12px;
+  flex-shrink: 0;
+}
+
+.task-panel-head strong {
+  flex-shrink: 0;
+}
+
+.task-all-sessions {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
 }
 
 .task-panel-body {
   display: flex;
+  flex-direction: column;
   min-height: 0;
   flex: 1;
   overflow: hidden;
 }
 
 .task-list {
-  width: 38%;
-  border-right: 1px solid var(--border);
+  width: 100%;
+  max-height: 88px;
+  border-right: none;
+  border-bottom: 1px solid var(--border);
   overflow: auto;
   padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+  background: color-mix(in oklch, var(--fg) 3%, transparent);
 }
 
 .task-list-item {
@@ -334,8 +359,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
-  padding: 8px;
+  gap: 8px;
+  padding: 7px 10px;
   border: none;
   border-radius: 6px;
   background: transparent;
@@ -352,63 +377,80 @@
 }
 
 .task-list-title {
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.35;
 }
 
 .task-empty {
-  padding: 10px;
-  font-size: 11px;
+  padding: 14px 12px;
+  font-size: 12px;
   color: var(--muted);
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 .task-empty code {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .task-detail {
   flex: 1;
+  min-height: 0;
   overflow: auto;
-  padding: 10px;
+  padding: 12px;
+  overscroll-behavior: contain;
 }
 
 .task-detail-head {
   display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
 .task-detail-title {
   font-weight: 600;
   font-size: 13px;
+  line-height: 1.45;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .task-detail-meta {
   font-size: 11px;
   color: var(--muted);
-  margin-top: 2px;
+  margin-top: 4px;
+  line-height: 1.4;
 }
 
 .task-detail-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   flex-shrink: 0;
 }
 
+.task-detail-actions .btn {
+  font-size: 11px;
+  padding: 4px 10px;
+}
+
 .task-steps {
   margin: 0;
-  padding: 0 0 0 0;
+  padding: 0;
   list-style: none;
 }
 
 .task-step {
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 8px;
+  padding: 10px;
   margin-bottom: 8px;
   background: var(--bg);
 }
@@ -430,23 +472,33 @@
   font-size: 10px;
   font-weight: 600;
   flex-shrink: 0;
+  margin-top: 1px;
 }
 
 .task-step-text {
   flex: 1;
   min-width: 0;
   font-size: 12px;
+  line-height: 1.45;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .task-step-cmd {
   display: block;
-  margin-top: 4px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in oklch, var(--fg) 5%, transparent);
+  border: 1px solid var(--border);
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--accent);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  line-height: 1.4;
 }
 
 .task-step-btns {
@@ -461,6 +513,9 @@
   font-size: 10px;
   color: var(--muted);
   flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
 }
 
 .task-status.st-done {
@@ -469,8 +524,10 @@
 .task-status.st-failed {
   color: var(--danger);
 }
-.task-status.st-running {
-  color: var(--warn);
+.task-status.st-running,
+.task-status.st-open {
+  color: var(--accent);
+  border-color: color-mix(in oklch, var(--accent) 40%, var(--border));
 }
 
 .task-run-next {
