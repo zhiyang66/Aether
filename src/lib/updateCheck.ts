@@ -1,15 +1,22 @@
 /**
  * Update check — compare current app version against a feed.
  *
- * Supported feeds:
- * 1) Custom `version.json`:
- *    { "version": "1.0.2", "notes": "...", "url": "https://..." }
- * 2) GitHub Releases API (default):
- *    https://api.github.com/repos/{owner}/{repo}/releases/latest
- *    → uses tag_name / body / html_url
+ * Default feed avoids api.github.com (anonymous rate limit / 403):
+ *   https://github.com/{owner}/{repo}/releases/latest
+ *   with Accept: application/json → { tag_name, html_url, ... }
  *
- * Never auto-installs; UI only prompts and can open the download page.
+ * Fallback:
+ *   raw.githubusercontent.com/.../public/version.json
+ *
+ * Custom version.json still supported:
+ *   { "version": "1.0.3", "notes": "...", "url": "https://..." }
+ *
+ * Fetch goes through Rust `update_feed_fetch` in Tauri (CSP + proper UA).
+ * Never auto-installs.
  */
+
+import { invoke } from "@tauri-apps/api/core";
+import { isTauri } from "./window";
 
 export type RemoteVersion = {
   version: string;
@@ -23,9 +30,13 @@ export type UpdateCheckResult =
   | { status: "available"; current: string; remote: RemoteVersion }
   | { status: "error"; message: string };
 
-/** Default feed: this project's GitHub latest release. */
+/** Prefer github.com (not api.github.com) to avoid anonymous API rate limits. */
 export const DEFAULT_UPDATE_FEED =
-  "https://api.github.com/repos/zhiyang66/Aether/releases/latest";
+  "https://github.com/zhiyang66/Aether/releases/latest";
+
+/** Static fallback if the releases page is unreachable. */
+export const FALLBACK_VERSION_JSON =
+  "https://raw.githubusercontent.com/zhiyang66/Aether/master/public/version.json";
 
 /** Semver-ish compare: 1 if a>b, -1 if a<b, 0 equal. */
 export function compareVersions(a: string, b: string): number {
@@ -41,12 +52,6 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-function isGitHubReleasesUrl(url: string): boolean {
-  return /api\.github\.com\/repos\/[^/]+\/[^/]+\/releases(\/latest)?\/?$/i.test(
-    url.replace(/\?.*$/, ""),
-  );
-}
-
 /** Normalize various feed JSON shapes into RemoteVersion. */
 export function parseUpdatePayload(data: unknown, feedUrl: string): RemoteVersion {
   if (!data || typeof data !== "object") {
@@ -54,36 +59,28 @@ export function parseUpdatePayload(data: unknown, feedUrl: string): RemoteVersio
   }
   const o = data as Record<string, unknown>;
 
-  // GitHub Releases API (single release object)
-  if (typeof o.tag_name === "string" || Array.isArray(o.assets)) {
+  // GitHub Releases — API or github.com/releases/latest?Accept=application/json
+  if (
+    typeof o.tag_name === "string" ||
+    typeof o.tag_name === "number" ||
+    Array.isArray(o.assets)
+  ) {
     const tag = String(o.tag_name || o.name || "").trim();
     if (!tag) throw new Error("GitHub Release 缺少 tag_name");
     const notes = typeof o.body === "string" ? o.body : undefined;
+    const ver = tag.replace(/^v/i, "");
+    const tagPath = tag.startsWith("v") ? tag : `v${tag}`;
+    // github.com/releases/latest?Accept=json sometimes omits html_url
     const htmlUrl =
-      typeof o.html_url === "string"
-        ? o.html_url
-        : typeof o.url === "string"
-          ? o.url
-          : undefined;
-    // Prefer browser download for setup.exe if present
-    let url = htmlUrl;
-    if (Array.isArray(o.assets)) {
-      const assets = o.assets as Array<Record<string, unknown>>;
-      const setup = assets.find((a) =>
-        /\.exe$/i.test(String(a.name || "")) && /setup/i.test(String(a.name || "")),
-      );
-      const anyExe = assets.find((a) => /\.(exe|msi|dmg|appimage)$/i.test(String(a.name || "")));
-      const pick = setup || anyExe;
-      if (pick && typeof pick.browser_download_url === "string") {
-        // Keep release page as primary open target; notes mention assets.
-        // html_url is better UX for multi-asset releases.
-        url = htmlUrl || pick.browser_download_url;
-      }
-    }
+      (typeof o.html_url === "string" && o.html_url) ||
+      (typeof o.url === "string" && String(o.url).includes("/releases/")
+        ? String(o.url)
+        : "") ||
+      `https://github.com/zhiyang66/Aether/releases/tag/${tagPath}`;
     return {
-      version: tag.replace(/^v/i, ""),
+      version: ver,
       notes: notes?.slice(0, 2000),
-      url: url || feedUrl,
+      url: htmlUrl,
     };
   }
 
@@ -93,15 +90,16 @@ export function parseUpdatePayload(data: unknown, feedUrl: string): RemoteVersio
   return {
     version: version.replace(/^v/i, ""),
     notes: o.notes != null ? String(o.notes) : undefined,
-    url: o.url != null ? String(o.url) : undefined,
+    url:
+      o.url != null
+        ? String(o.url)
+        : "https://github.com/zhiyang66/Aether/releases/latest",
   };
 }
 
 /**
- * Resolve feed URL:
- * - empty / "github" / "default" → DEFAULT_UPDATE_FEED
- * - "off" / "none" / "disabled" → disabled
- * - otherwise use as-is
+ * Resolve feed URL. Empty / github / default → GitHub releases/latest page.
+ * Custom URL still accepted for tests; UI no longer exposes the field.
  */
 export function resolveUpdateFeedUrl(configured: string | undefined | null): string | null {
   const raw = (configured ?? "").trim();
@@ -114,6 +112,42 @@ export function resolveUpdateFeedUrl(configured: string | undefined | null): str
   return raw;
 }
 
+async function fetchFeedText(url: string, signal?: AbortSignal): Promise<string> {
+  if (isTauri()) {
+    return invoke<string>("update_feed_fetch", { url });
+  }
+  // Browser dev: github.com/releases/latest needs Accept: application/json
+  const headers: Record<string, string> = {
+    Accept: url.includes("github.com/") && url.includes("/releases/")
+      ? "application/json"
+      : "application/json",
+  };
+  const res = await fetch(url, { signal, headers });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`HTTP ${res.status}${body ? `: ${body.slice(0, 160)}` : ""}`);
+  }
+  return res.text();
+}
+
+function friendlyFetchError(message: string): string {
+  if (/403|rate limit/i.test(message)) {
+    return "GitHub 请求受限，请稍后再试（已避免 api.github.com 限流；若仍失败请检查网络）";
+  }
+  return message;
+}
+
+async function loadRemote(url: string, signal?: AbortSignal): Promise<RemoteVersion> {
+  const text = await fetchFeedText(url, signal);
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new Error("更新源返回的不是 JSON");
+  }
+  return parseUpdatePayload(data, url);
+}
+
 export async function checkForUpdate(opts: {
   current: string;
   feedUrl: string;
@@ -122,18 +156,25 @@ export async function checkForUpdate(opts: {
   const url = resolveUpdateFeedUrl(opts.feedUrl);
   if (!url) return { status: "disabled" };
   try {
-    const headers: Record<string, string> = {
-      Accept: isGitHubReleasesUrl(url)
-        ? "application/vnd.github+json"
-        : "application/json",
-    };
-    if (isGitHubReleasesUrl(url)) {
-      headers["X-GitHub-Api-Version"] = "2022-11-28";
+    let remote: RemoteVersion;
+    try {
+      remote = await loadRemote(url, opts.signal);
+    } catch (primaryErr) {
+      // If default GitHub path fails, try static version.json on the repo
+      const primaryMsg =
+        primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+      if (url === DEFAULT_UPDATE_FEED) {
+        try {
+          remote = await loadRemote(FALLBACK_VERSION_JSON, opts.signal);
+        } catch (fallbackErr) {
+          const fb =
+            fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+          throw new Error(friendlyFetchError(`${primaryMsg}；备用源: ${fb}`));
+        }
+      } else {
+        throw new Error(friendlyFetchError(primaryMsg));
+      }
     }
-    const res = await fetch(url, { signal: opts.signal, headers });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = (await res.json()) as unknown;
-    const remote = parseUpdatePayload(data, url);
     if (compareVersions(remote.version, opts.current) > 0) {
       return { status: "available", current: opts.current, remote };
     }
@@ -141,7 +182,7 @@ export async function checkForUpdate(opts: {
   } catch (e) {
     return {
       status: "error",
-      message: e instanceof Error ? e.message : String(e),
+      message: friendlyFetchError(e instanceof Error ? e.message : String(e)),
     };
   }
 }

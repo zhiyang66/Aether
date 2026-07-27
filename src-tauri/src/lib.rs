@@ -210,6 +210,62 @@ async fn agent_models_list(req: agent_api::ModelsListRequest) -> Result<Vec<agen
   agent_api::list_models(req).await
 }
 
+/// Fetch update feed JSON via Rust HTTP (avoids WebView CSP / browser UA 403).
+/// Only http(s) URLs; response capped at 512 KiB.
+/// Prefer github.com/releases/latest (Accept: application/json) over api.github.com
+/// so anonymous clients are not hit by the 60 req/h REST API quota.
+#[tauri::command]
+async fn update_feed_fetch(url: String) -> Result<String, String> {
+  let url = url.trim().to_string();
+  if !(url.starts_with("https://") || url.starts_with("http://")) {
+    return Err("更新源须为 http(s) URL".into());
+  }
+  // Basic SSRF guard: block obvious local targets
+  let lower = url.to_ascii_lowercase();
+  if lower.contains("://127.")
+    || lower.contains("://localhost")
+    || lower.contains("://0.0.0.0")
+    || lower.contains("://[::1]")
+    || lower.contains("://10.")
+    || lower.contains("://192.168.")
+    || lower.contains("://169.254.")
+  {
+    return Err("拒绝访问本地/内网地址".into());
+  }
+
+  let client = reqwest::Client::builder()
+    .timeout(std::time::Duration::from_secs(20))
+    .redirect(reqwest::redirect::Policy::limited(10))
+    .user_agent("Aether-UpdateCheck/1.0 (+https://github.com/zhiyang66/Aether)")
+    .build()
+    .map_err(|e| format!("HTTP 客户端: {e}"))?;
+
+  // github.com/.../releases/latest returns JSON when Accept is application/json
+  // (and does not share api.github.com's strict anonymous rate limit).
+  let mut req = client.get(&url).header(reqwest::header::ACCEPT, "application/json");
+  if url.contains("api.github.com") {
+    req = req
+      .header(reqwest::header::ACCEPT, "application/vnd.github+json")
+      .header("X-GitHub-Api-Version", "2022-11-28");
+  }
+
+  let res = req.send().await.map_err(|e| format!("请求失败: {e}"))?;
+  let status = res.status();
+  let bytes = res
+    .bytes()
+    .await
+    .map_err(|e| format!("读取响应失败: {e}"))?;
+  if bytes.len() > 512 * 1024 {
+    return Err("更新源响应过大（>512KB）".into());
+  }
+  if !status.is_success() {
+    let snippet = String::from_utf8_lossy(&bytes);
+    let short = snippet.chars().take(200).collect::<String>();
+    return Err(format!("HTTP {status}: {short}"));
+  }
+  String::from_utf8(bytes.to_vec()).map_err(|e| format!("响应非 UTF-8: {e}"))
+}
+
 #[tauri::command]
 async fn agent_chat(app: tauri::AppHandle, req: agent_api::ChatRequest) -> Result<(), String> {
   agent_api::chat_stream(app, req).await
@@ -273,6 +329,7 @@ pub fn run() {
       agent_chat_cancel,
       agent_chat_tools,
       agent_chat_stream_tools,
+      update_feed_fetch,
       mcp_host::mcp_connect,
       mcp_host::mcp_disconnect,
       mcp_host::mcp_status,

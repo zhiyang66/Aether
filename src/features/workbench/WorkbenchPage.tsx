@@ -46,19 +46,15 @@ export function WorkbenchPage() {
     return () => window.removeEventListener("sw:open-palette", openPal);
   }, []);
 
-  // Silent background update check on startup (default: GitHub Releases latest)
+  // Silent background update check on startup (GitHub Releases latest)
   useEffect(() => {
-    const feed = useSettingsStore.getState().updateFeedUrl;
     const t = window.setTimeout(() => {
       void (async () => {
         try {
-          const { checkForUpdate, resolveUpdateFeedUrl } = await import(
-            "../../lib/updateCheck"
-          );
-          if (!resolveUpdateFeedUrl(feed)) return;
+          const { checkForUpdate } = await import("../../lib/updateCheck");
           const version =
             typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0";
-          const r = await checkForUpdate({ current: version, feedUrl: feed ?? "" });
+          const r = await checkForUpdate({ current: version, feedUrl: "" });
           if (r.status === "available") {
             useWorkbenchStore
               .getState()
