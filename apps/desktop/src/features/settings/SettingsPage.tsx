@@ -1243,18 +1243,21 @@ export function SettingsPage() {
               <div className="section">
                 <div className="section-title">更新</div>
                 <div className="card">
-                  <Row label="更新源 URL" desc="version.json 地址，留空则不检查">
+                  <Row
+                    label="更新源 URL"
+                    desc="留空 = 默认 GitHub Releases；填 version.json 地址可自定义；填 off 关闭检查"
+                  >
                     <input
                       className="ctrl mono"
                       value={s.updateFeedUrl}
                       onChange={(e) => s.patch({ updateFeedUrl: e.target.value })}
-                      placeholder="https://example.com/version.json"
+                      placeholder="默认：GitHub zhiyang66/Aether releases/latest"
                     />
                   </Row>
                   <div className="row">
                     <div className="row-text">
                       <div className="row-label">检查更新</div>
-                      <div className="row-desc">仅提示，不自动安装</div>
+                      <div className="row-desc">读取 GitHub 最新 Release · 仅提示，不自动安装</div>
                     </div>
                     <div className="row-control">
                       <button
@@ -1265,7 +1268,7 @@ export function SettingsPage() {
                             current: APP_VERSION,
                             feedUrl: s.updateFeedUrl,
                           });
-                          if (r.status === "disabled") toastMsg("未配置更新源");
+                          if (r.status === "disabled") toastMsg("更新检查已关闭（更新源=off）");
                           else if (r.status === "up-to-date") toastMsg(`已是最新 · ${r.current}`);
                           else if (r.status === "available") {
                             const go = await askConfirm(`发现新版本 ${r.remote.version}`, {
