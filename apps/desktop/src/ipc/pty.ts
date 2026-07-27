@@ -133,7 +133,7 @@ export async function agentChat(req: {
   apiKey?: string;
   provider?: string;
   model: string;
-  messages: { role: string; content: string }[];
+  messages: { role: string; content: unknown }[];
   streamId: string;
 }) {
   if (!isTauri()) throw new Error("agent chat requires tauri for streaming proxy");

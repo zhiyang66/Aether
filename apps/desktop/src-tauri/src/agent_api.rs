@@ -1486,7 +1486,33 @@ fn openai_msgs_to_anthropic(
         out.push(serde_json::json!({"role": "assistant", "content": blocks}));
       }
       "user" => {
-        if !text.is_empty() {
+        if let Some(parts) = m.get("content").and_then(|c| c.as_array()) {
+          let mut blocks = Vec::new();
+          for part in parts {
+            if let Some(value) = part.get("text").and_then(|v| v.as_str()) {
+              if !value.is_empty() {
+                blocks.push(serde_json::json!({"type": "text", "text": value}));
+              }
+            }
+            let image_url = part
+              .get("image_url")
+              .and_then(|value| value.get("url").or(Some(value)))
+              .and_then(|value| value.as_str());
+            if let Some(url) = image_url {
+              if let Some((mime, data)) = url.strip_prefix("data:").and_then(|v| v.split_once(";base64,")) {
+                if matches!(mime, "image/png" | "image/jpeg" | "image/webp" | "image/gif") && !data.is_empty() {
+                  blocks.push(serde_json::json!({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": mime, "data": data},
+                  }));
+                }
+              }
+            }
+          }
+          if !blocks.is_empty() {
+            out.push(serde_json::json!({"role": "user", "content": blocks}));
+          }
+        } else if !text.is_empty() {
           out.push(serde_json::json!({"role": "user", "content": text}));
         }
       }

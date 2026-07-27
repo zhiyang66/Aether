@@ -7,7 +7,7 @@
  * rule allows them. "总是允许" writes a rule, visible & revocable in settings.
  */
 
-import { isDangerousCommand } from "./danger";
+import { isDangerousCommand, isReadOnlyShellCommand } from "./danger";
 
 export type ApprovalScope = "tool" | "command-pattern" | "mcp-server";
 export type ApprovalDecision = "allow" | "deny" | "ask";
@@ -163,6 +163,8 @@ export type ApprovalRequest = {
   command?: string;
   /** mcp server name when the tool is an MCP call */
   mcpServer?: string;
+  /** Model-declared intent. It can escalate approval, never lower it. */
+  agentRisk?: "read" | "write" | "destructive";
 };
 
 export type ApprovalVerdict = {
@@ -180,7 +182,8 @@ export function resolveApproval(
   req: ApprovalRequest,
   store: ApprovalStore = loadApproval(),
 ): ApprovalVerdict {
-  const dangerous = !!req.command && isDangerousCommand(req.command);
+  const dangerous =
+    (!!req.command && isDangerousCommand(req.command)) || req.agentRisk === "destructive";
 
   for (const r of store.rules) {
     if (r.scope === "tool" && r.key === req.tool) {
@@ -207,9 +210,15 @@ export function resolveApproval(
     decision = "ask";
     reason = "预设: 保守（全部询问）";
   } else if (store.preset === "balanced") {
-    if (READ_ONLY_TOOLS.has(req.tool) || LOW_RISK_TOOLS.has(req.tool)) {
+    if (
+      READ_ONLY_TOOLS.has(req.tool) ||
+      LOW_RISK_TOOLS.has(req.tool) ||
+      (req.tool === "run_command" && !!req.command && isReadOnlyShellCommand(req.command))
+    ) {
       decision = "allow";
-      reason = "预设: 平衡（工作台内操作放行）";
+      reason = req.tool === "run_command"
+        ? "预设: 平衡（只读命令放行）"
+        : "预设: 平衡（工作台内操作放行）";
     } else {
       decision = "ask";
       reason = "预设: 平衡（系统级操作询问）";

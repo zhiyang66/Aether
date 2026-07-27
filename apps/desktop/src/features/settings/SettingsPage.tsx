@@ -1,5 +1,6 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { WinControls } from "../../components/WinControls";
 import { Toast } from "../../components/Toast";
 import { useSettingsStore, platformLabel, exportSettingsJson } from "../../store/settingsStore";
@@ -307,13 +308,32 @@ export function SettingsPage() {
   const [panel, setPanel] = useState<PanelId>("general");
   const [search, setSearch] = useState("");
   const [modelsLoading, setModelsLoading] = useState(false);
+  const [updateChecking, setUpdateChecking] = useState(false);
   const [updateInstalling, setUpdateInstalling] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState<{ downloaded: number; total: number | null; percent: number | null } | null>(null);
 
   useEffect(() => {
     s.load();
     const hash = window.location.hash.replace("#", "") as PanelId;
     if (NAV.some((n) => n.id === hash)) setPanel(hash);
     void ensureShells();
+  }, []);
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    void listen<{ downloaded?: number; total?: number | null; percent?: number | null }>(
+      "update://download-progress",
+      (event) => {
+        setUpdateProgress({
+          downloaded: event.payload.downloaded ?? 0,
+          total: event.payload.total ?? null,
+          percent: event.payload.percent ?? null,
+        });
+      },
+    ).then((stop) => {
+      unlisten = stop;
+    });
+    return () => unlisten?.();
   }, []);
 
   const filtered = NAV.filter((n) => {
@@ -1257,39 +1277,58 @@ export function SettingsPage() {
                         type="button"
                         className="btn"
                         onClick={async () => {
-                          const r = await checkForUpdate({
-                            current: APP_VERSION,
-                            feedUrl: "",
-                          });
-                          if (r.status === "disabled") toastMsg("更新检查不可用");
-                          else if (r.status === "up-to-date") toastMsg(`已是最新 · ${r.current}`);
-                          else if (r.status === "available") {
-                            if (!r.remote.downloadUrl) {
-                              toastMsg(`新版本 ${r.remote.version} 尚未提供应用内安装包`);
-                              return;
-                            }
-                            const go = await askConfirm(`发现新版本 ${r.remote.version}`, {
-                              message: `${r.remote.notes || ""}\n\n将下载更新并启动安装程序，应用会退出。`.trim(),
-                              okLabel: "下载并安装",
+                          setUpdateChecking(true);
+                          try {
+                            const r = await checkForUpdate({
+                              current: APP_VERSION,
+                              feedUrl: "",
                             });
-                            if (!go) return;
-                            setUpdateInstalling(true);
-                            try {
-                              await downloadAndInstallUpdate(
-                                r.remote.downloadUrl,
-                                r.remote.downloadName,
-                              );
-                            } catch (e) {
-                              const message = e instanceof Error ? e.message : String(e);
-                              toastMsg(`下载安装失败：${message}`);
-                              setUpdateInstalling(false);
-                            }
-                          } else toastMsg(`检查失败：${r.message}`);
+                            if (r.status === "disabled") toastMsg("更新检查不可用");
+                            else if (r.status === "up-to-date") toastMsg(`已是最新 · ${r.current}`);
+                            else if (r.status === "available") {
+                              if (!r.remote.downloadUrl) {
+                                toastMsg(`新版本 ${r.remote.version} 尚未提供应用内安装包`);
+                                return;
+                              }
+                              const go = await askConfirm(`发现新版本 ${r.remote.version}`, {
+                                message: `${r.remote.notes || ""}\n\n将下载更新并启动安装程序，应用会退出。`.trim(),
+                                okLabel: "下载并安装",
+                              });
+                              if (!go) return;
+                              setUpdateInstalling(true);
+                              setUpdateProgress({ downloaded: 0, total: null, percent: 0 });
+                              try {
+                                await downloadAndInstallUpdate(
+                                  r.remote.downloadUrl,
+                                  r.remote.downloadName,
+                                );
+                              } catch (e) {
+                                const message = e instanceof Error ? e.message : String(e);
+                                toastMsg(`下载安装失败：${message}`);
+                                setUpdateInstalling(false);
+                              }
+                            } else toastMsg(`检查失败：${r.message}`);
+                          } finally {
+                            setUpdateChecking(false);
+                          }
                         }}
-                        disabled={updateInstalling}
+                        disabled={updateChecking || updateInstalling}
                       >
-                        {updateInstalling ? "正在下载…" : "检查更新"}
+                        {updateChecking
+                          ? "正在检查…"
+                          : updateInstalling
+                            ? updateProgress?.percent != null
+                              ? `正在下载 ${updateProgress.percent}%`
+                              : "正在下载…"
+                            : "检查更新"}
                       </button>
+                      {updateInstalling && (
+                        <span className="row-desc" aria-live="polite">
+                          {updateProgress?.percent != null
+                            ? `已下载 ${updateProgress.percent}%`
+                            : "正在获取下载进度…"}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>

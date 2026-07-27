@@ -31,6 +31,7 @@ import { appendPaneOutput, clearPaneOutput, setPaneOutputBanner } from "../lib/p
 import { captureSnapshots } from "../lib/outputSnapshot";
 import { ptyWrite } from "../ipc/pty";
 import { recordCommand } from "../lib/commandHistory";
+import { prepareTerminalPaste, validateAgentShellCommand } from "../lib/terminalPaste";
 import {
   getLivePtyId,
   getLiveTerm,
@@ -919,6 +920,13 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
       // Exec mode + danger policy — shared with tool loop via resolveDangerAction
       let shouldRun = run;
       if (run) {
+        const commandCheck = validateAgentShellCommand(cmd);
+        if (!commandCheck.ok) {
+          get().toastMsg(commandCheck.reason);
+          return;
+        }
+      }
+      if (run) {
         const decision = resolveDangerAction(cmd, settings, true);
         shouldRun = decision.run;
         if (decision.note === "danger-insert") {
@@ -967,7 +975,14 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
       }
 
       if (!get().useMockTerminal && livePty) {
-        const payload = shouldRun ? `${cmd}\r` : cmd;
+        const prepared = shouldRun
+          ? { ok: true as const, payload: `${cmd}\r` }
+          : prepareTerminalPaste(cmd, pane.shellKey);
+        if (!prepared.ok) {
+          get().toastMsg(prepared.reason);
+          return;
+        }
+        const payload = prepared.payload;
         void ptyWrite(livePty, payload).catch((e) => {
           get().toastMsg(
             `写入终端失败: ${e instanceof Error ? e.message : String(e)}`,

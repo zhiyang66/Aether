@@ -44,6 +44,19 @@ export function isWorkbenchChord(e: TermShortcutEvent): boolean {
   return false;
 }
 
+/**
+ * Emit a literal line break without accepting the current command.
+ *
+ * PSReadLine has a native Ctrl+Enter binding through CSI-u. Readline/ZLE
+ * shells accept quoted Ctrl+J, which inserts a newline in the edit buffer.
+ * cmd.exe has no editable multiline command buffer.
+ */
+export function ctrlEnterSequenceForShell(shellKey: string): string | null {
+  if (shellKey === "ps" || shellKey.startsWith("ps")) return "\x1b[13;5u";
+  if (shellKey === "cmd") return null;
+  return "\x16\x0a";
+}
+
 export function resolveTerminalShortcut(
   e: TermShortcutEvent,
   opts: { hasSelection: boolean; selection: string },

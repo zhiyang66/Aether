@@ -29,7 +29,15 @@ import {
   setLiveTerm,
   type LiveTerm,
 } from "./termRegistry";
-import { resolveTerminalShortcut } from "../../lib/terminalShortcuts";
+import { ctrlEnterSequenceForShell, resolveTerminalShortcut } from "../../lib/terminalShortcuts";
+import { prepareTerminalPaste } from "../../lib/terminalPaste";
+import {
+  clipboardHasImage,
+  quoteShellPath,
+  readClipboardImage,
+  readClipboardImageFromData,
+  savePastedImage,
+} from "../../lib/imagePaste";
 import { setTermRendererLive } from "../../lib/termRenderer";
 import { InlineK } from "./InlineK";
 
@@ -101,9 +109,6 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
   const [searchQuery, setSearchQuery] = useState("");
   const [kbarOpen, setKbarOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  // mirror suggestOpen for term.onData closure
-  const suggestOpenRef = useRef(false);
-  suggestOpenRef.current = suggestOpen;
 
   const fontSize = useSettingsStore((s) => s.fontSize);
   const fontFamily = useSettingsStore((s) => s.fontFamily);
@@ -304,12 +309,84 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
     live.sessionCleanups.push(() => osc7.dispose());
     live.sessionCleanups.push(() => clearBlocks(paneId));
 
+    const writeClipboardText = (text: string) => {
+      const prepared = prepareTerminalPaste(text, shellKey);
+      if (!prepared.ok) {
+        useWorkbenchStore.getState().toastMsg(prepared.reason);
+        return;
+      }
+      if (live.ptyId && !live.disposed) {
+        void ptyWrite(live.ptyId, prepared.payload);
+      } else {
+        useWorkbenchStore.getState().toastMsg("终端未就绪");
+      }
+    };
+
+    const writeClipboardImage = async (image: Awaited<ReturnType<typeof readClipboardImage>>) => {
+      if (!image) {
+        useWorkbenchStore.getState().toastMsg("剪贴板中没有可用图片");
+        return;
+      }
+      try {
+        const path = await savePastedImage(image);
+        writeClipboardText(quoteShellPath(path, shellKey));
+        useWorkbenchStore.getState().toastMsg("已插入图片文件路径");
+      } catch (e) {
+        useWorkbenchStore.getState().toastMsg(
+          `粘贴图片失败: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+    };
+
+    // Capture browser-native paste too (context menu / OS paste), not only Ctrl+V.
+    const onNativePaste = (ev: ClipboardEvent) => {
+      const text = ev.clipboardData?.getData("text/plain") || "";
+      if (text) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        writeClipboardText(text);
+        return;
+      }
+      if (clipboardHasImage(ev.clipboardData)) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        void readClipboardImageFromData(ev.clipboardData).then(writeClipboardImage);
+      }
+    };
+    host.addEventListener("paste", onNativePaste, true);
+    live.sessionCleanups.push(() => host.removeEventListener("paste", onNativePaste, true));
+
     // Terminal chords: Ctrl+C (copy | SIGINT), Ctrl+V paste, Ctrl+L clear
     // return false → we handled it (block xterm default); true → pass to xterm/PTY
     term.attachCustomKeyEventHandler((ev) => {
       // Terminal-local features (search, block jumps) — before generic chords
       if (ev.type === "keydown") {
+        // Some Chromium/IME combinations do not forward Home/End reliably to
+        // xterm. Send the standard shell line-editing sequences directly.
+        if (
+          !ev.ctrlKey &&
+          !ev.metaKey &&
+          !ev.altKey &&
+          !ev.shiftKey &&
+          (ev.key === "Home" || ev.key === "End")
+        ) {
+          ev.preventDefault();
+          if (live.ptyId && !live.disposed) {
+            void ptyWrite(live.ptyId, ev.key === "Home" ? "\x1b[H" : "\x1b[F");
+          }
+          return false;
+        }
         const mod = ev.ctrlKey || ev.metaKey;
+        // xterm otherwise treats Ctrl+Enter as a plain Enter. Encode a
+        // non-accepting newline for the active shell's line editor.
+        const ctrlEnterSequence = ctrlEnterSequenceForShell(shellKey);
+        if (ctrlEnterSequence && ev.ctrlKey && !ev.metaKey && !ev.altKey && ev.key === "Enter") {
+          ev.preventDefault();
+          if (live.ptyId && !live.disposed) {
+            void ptyWrite(live.ptyId, ctrlEnterSequence);
+          }
+          return false;
+        }
         if (mod && ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === "f") {
           ev.preventDefault();
           setSearchOpen(true);
@@ -371,21 +448,22 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
       }
 
       if (resolved.action === "paste") {
-        void navigator.clipboard
-          .readText()
-          .then((t) => {
-            if (!t) {
-              useWorkbenchStore.getState().toastMsg("剪贴板为空");
+        void navigator.clipboard.readText().then(
+          (text) => {
+            if (text) {
+              writeClipboardText(text);
               return;
             }
-            const pid = live.ptyId;
-            if (pid && !live.disposed) {
-              void ptyWrite(pid, t);
-            } else {
-              useWorkbenchStore.getState().toastMsg("终端未就绪");
-            }
-          })
-          .catch(() => useWorkbenchStore.getState().toastMsg("无法读取剪贴板"));
+            void readClipboardImage().then(writeClipboardImage).catch(() => {
+              useWorkbenchStore.getState().toastMsg("无法读取剪贴板图片");
+            });
+          },
+          () => {
+            void readClipboardImage().then(writeClipboardImage).catch(() => {
+              useWorkbenchStore.getState().toastMsg("无法读取剪贴板");
+            });
+          },
+        );
         return false;
       }
 
@@ -540,7 +618,6 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
         const dataDisp = term.onData((data) => {
           const pid = live.ptyId;
           if (!pid || live.disposed) return;
-          if (data === "\t" && suggestOpenRef.current) return;
           for (const line of lineBufRef.current.push(data)) {
             recordCommand(line, shellKey, historyLimit);
             notePaneCommand(paneId, line);

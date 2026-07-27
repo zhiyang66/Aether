@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveTerminalShortcut } from "./terminalShortcuts";
+import { ctrlEnterSequenceForShell, resolveTerminalShortcut } from "./terminalShortcuts";
 
 const base = {
   type: "keydown",
@@ -69,6 +69,26 @@ describe("resolveTerminalShortcut", () => {
     ).toEqual({ action: "pass" });
   });
 
+  it("plain Home and End remain terminal keys", () => {
+    for (const key of ["Home", "End"]) {
+      expect(
+        resolveTerminalShortcut(
+          { ...base, ctrlKey: false, key },
+          { hasSelection: false, selection: "" },
+        ),
+      ).toEqual({ action: "pass" });
+    }
+  });
+
+  it("does not claim Ctrl+Enter as a generic workbench chord", () => {
+    expect(
+      resolveTerminalShortcut(
+        { ...base, key: "Enter" },
+        { hasSelection: false, selection: "" },
+      ),
+    ).toEqual({ action: "pass" });
+  });
+
   it("metaKey acts as mod (macOS ⌘)", () => {
     expect(
       resolveTerminalShortcut(
@@ -76,6 +96,17 @@ describe("resolveTerminalShortcut", () => {
         { hasSelection: false, selection: "" },
       ),
     ).toEqual({ action: "sigint" });
+  });
+});
+
+describe("Ctrl+Enter terminal encoding", () => {
+  it("uses native PowerShell CSI-u and quoted newline for readline shells", () => {
+    expect(ctrlEnterSequenceForShell("ps")).toBe("\x1b[13;5u");
+    expect(ctrlEnterSequenceForShell("ps-pwsh")).toBe("\x1b[13;5u");
+    expect(ctrlEnterSequenceForShell("cmd")).toBeNull();
+    for (const shellKey of ["bash", "zsh", "wsl", "wsl:Ubuntu", "ssh:ubuntu-test"]) {
+      expect(ctrlEnterSequenceForShell(shellKey)).toBe("\x16\x0a");
+    }
   });
 });
 
