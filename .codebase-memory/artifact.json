@@ -1,0 +1,11 @@
+{
+    "schema_version": 1,
+    "commit": "",
+    "indexed_at": "2026-07-27T07:05:26Z",
+    "project": "D-Document-aether",
+    "nodes": 1303,
+    "edges": 3428,
+    "original_size": 2686976,
+    "compressed_size": 258039,
+    "compression_level": 9
+}
