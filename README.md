@@ -2,7 +2,7 @@
 
 以 **Agent 为核心**的跨平台终端工作台。本机 Shell 作为执行内核，界面与终端呈现完全自研：多标签、树状分屏、真实 PTY、OSC 133 命令块、对话式 Agent（工具循环）、MCP 工具生态、SSH 主机管理、会话录制回放。
 
-**当前版本：`1.0.2`**
+**当前版本：`1.0.3`**
 
 | 技术栈 | 用途 |
 |--------|------|
@@ -181,13 +181,15 @@ npm run dev
 
 ## 版本与许可
 
-- 版本号以 `package.json` / `src-tauri/tauri.conf.json` 为准（当前 **1.0.2**，应用内「关于」页同步显示）
+- 版本号以 `package.json` / `src-tauri/tauri.conf.json` 为准（当前 **1.0.3**，应用内「关于」页同步显示）
 - 跨平台桌面应用（Tauri）；本仓库 Release 附带当前环境可产出的安装包，其它平台可从源码构建
+- 更新检查默认对接 GitHub Releases（`设置 → 关于 → 检查更新`；更新源留空即可）
 - 发布标签：
   - [`v0.6.0`](https://github.com/zhiyang66/Aether/releases/tag/v0.6.0) — 早期基线
   - [`v1.0.0`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.0) — 1.0 稳定版
   - [`v1.0.1`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.1) — 窗格寻址 / 审批浮窗 / 红绿灯样式
-  - [`v1.0.2`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.2) — 当前：设置搜索 / WebGL / 多窗格询问与 Actions
+  - [`v1.0.2`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.2) — 设置搜索 / WebGL / 多窗格与 Actions
+  - [`v1.0.3`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.3) — 当前：去掉任务系统 · 默认 GitHub 检查更新
 - 仓库许可：见 `src-tauri/Cargo.toml`（MIT）
 
 ---

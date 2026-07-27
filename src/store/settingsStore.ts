@@ -150,6 +150,7 @@ const defaults = (): Omit<
   suggestAccept: "insert",
   outputSnapshotEnabled: false,
   outputSnapshotLines: 200,
+  /** Empty = use GitHub Releases latest for this project (see updateCheck.DEFAULT_UPDATE_FEED). Set "off" to disable. */
   updateFeedUrl: "",
   showThinking: false,
   projectContext: true,
