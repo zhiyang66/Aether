@@ -14,6 +14,10 @@ export type LiveTerm = {
   search?: import("@xterm/addon-search").SearchAddon;
   /** OSC 133 command-block tracker for this session */
   blocks?: import("../../lib/commandBlocks").BlockTracker;
+  /** Active glyph backend for this session */
+  renderer?: "webgl" | "canvas";
+  /** Dispose handle for WebGL addon (if loaded) */
+  webglDispose?: () => void;
 };
 
 const registry = new Map<string, LiveTerm>();
@@ -63,6 +67,15 @@ export function listLiveTerms(): Array<{ paneId: string; ptyId: string }> {
     if (!live.disposed && live.ptyId) {
       out.push({ paneId, ptyId: live.ptyId });
     }
+  }
+  return out;
+}
+
+/** All non-disposed live sessions (including pre-PTY), for renderer badge etc. */
+export function listAllLiveTerms(): Array<{ paneId: string; live: LiveTerm }> {
+  const out: Array<{ paneId: string; live: LiveTerm }> = [];
+  for (const [paneId, live] of registry) {
+    if (!live.disposed) out.push({ paneId, live });
   }
   return out;
 }

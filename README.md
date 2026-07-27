@@ -2,7 +2,7 @@
 
 以 **Agent 为核心**的跨平台终端工作台。本机 Shell 作为执行内核，界面与终端呈现完全自研：多标签、树状分屏、真实 PTY、OSC 133 命令块、任务自治的 Agent、MCP 工具生态、SSH 主机管理、会话录制回放。
 
-**当前版本：`1.0.1`**
+**当前版本：`1.0.2`**
 
 | 技术栈 | 用途 |
 |--------|------|
@@ -182,11 +182,12 @@ npm run dev
 
 ## 版本与许可
 
-- 版本号以 `package.json` / `src-tauri/tauri.conf.json` 为准（当前 **1.0.1**，应用内「关于」页同步显示）
+- 版本号以 `package.json` / `src-tauri/tauri.conf.json` 为准（当前 **1.0.2**，应用内「关于」页同步显示）
 - 发布标签：
   - [`v0.6.0`](https://github.com/zhiyang66/Aether/releases/tag/v0.6.0) — 早期基线
   - [`v1.0.0`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.0) — 1.0 稳定版
-  - [`v1.0.1`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.1) — 当前补丁（窗格寻址 / 审批浮窗 / macOS 红绿灯等）
+  - [`v1.0.1`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.1) — 窗格寻址 / 审批浮窗 / macOS 红绿灯
+  - [`v1.0.2`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.2) — 当前：设置搜索 / WebGL 终端 / 状态栏与标题栏
 - 仓库许可：见 `src-tauri/Cargo.toml`（MIT）
 
 ---

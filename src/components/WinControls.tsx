@@ -1,23 +1,28 @@
 import { useWorkbenchStore } from "../store/workbenchStore";
+import { useSettingsStore } from "../store/settingsStore";
 import { winMinimize, winToggleMaximize } from "../lib/window";
-import { isMacOS } from "../lib/platform";
+import { resolveWindowControlsSide } from "../lib/platform";
 
 /**
  * Window chrome buttons.
- * - Windows / Linux: right-side caption buttons (min / max / close)
- * - macOS: left-side traffic lights (close / min / zoom) so the custom
- *   titlebar matches system layout when decorations are disabled.
+ * - left  → macOS-style traffic lights (close / min / zoom)
+ * - right → Windows-style caption buttons (min / max / close)
+ * Side comes from settings.windowControlsSide (auto = mac left, else right).
  */
-export function WinControls({ placement = "auto" }: { placement?: "auto" | "left" | "right" }) {
+export function WinControls({
+  side: sideProp,
+}: {
+  /** Override resolved settings (tests / special layouts). */
+  side?: "left" | "right";
+} = {}) {
   const maximized = useWorkbenchStore((s) => s.windowMaximized);
   const setMaximized = useWorkbenchStore((s) => s.setWindowMaximized);
   const toastMsg = useWorkbenchStore((s) => s.toastMsg);
   const requestAppClose = useWorkbenchStore((s) => s.requestAppClose);
-  const mac = isMacOS();
-  const side =
-    placement === "auto" ? (mac ? "left" : "right") : placement;
+  const pref = useSettingsStore((s) => s.windowControlsSide);
+  const side = sideProp ?? resolveWindowControlsSide(pref);
 
-  if (side === "left" || mac) {
+  if (side === "left") {
     return (
       <div className="win-controls mac-traffic" role="group" aria-label="窗口控制">
         <button

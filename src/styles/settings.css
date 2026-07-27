@@ -110,6 +110,7 @@
       padding: 0 0 0 12px;
       flex-shrink: 0;
       user-select: none;
+      gap: 8px;
     }
     .titlebar-left {
       display: flex;
@@ -117,6 +118,49 @@
       gap: 10px;
       min-width: 0;
       flex: 1;
+    }
+    /* Left chrome: centered title via equal side columns */
+    .titlebar.is-mac {
+      padding-left: 0;
+      padding-right: 12px;
+      gap: 0;
+    }
+    .titlebar-mac-side {
+      flex: 1 1 0;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      height: 100%;
+    }
+    .titlebar-mac-side-left {
+      justify-content: flex-start;
+    }
+    .titlebar-mac-side-right {
+      justify-content: flex-end;
+    }
+    .titlebar-mac-center {
+      flex: 0 1 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-width: 0;
+      max-width: min(420px, 46vw);
+      padding: 0 8px;
+    }
+    .titlebar.is-mac .titlebar-nav {
+      margin-left: 0;
+      margin-right: 0;
+      flex-shrink: 0;
+    }
+    .titlebar.is-mac .titlebar-mac-spacer {
+      display: none;
+    }
+    .titlebar-drag-fill {
+      flex: 1 1 auto;
+      min-width: 8px;
+      height: 100%;
+      align-self: stretch;
     }
     .app-icon {
       width: 18px;
@@ -147,6 +191,7 @@
       align-items: center;
       gap: 4px;
       margin-right: 8px;
+      flex-shrink: 0;
     }
     .nav-link {
       font-size: 11px;

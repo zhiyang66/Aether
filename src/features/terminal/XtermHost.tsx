@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
+import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { BlockTracker, clearBlocks, getBlocks, formatDuration } from "../../lib/commandBlocks";
 import { isTauri } from "../../lib/window";
@@ -24,11 +25,59 @@ import {
   deleteLiveTerm,
   getLiveTerm,
   hasLiveTerm,
+  listAllLiveTerms,
   setLiveTerm,
   type LiveTerm,
 } from "./termRegistry";
 import { resolveTerminalShortcut } from "../../lib/terminalShortcuts";
+import { setTermRendererLive } from "../../lib/termRenderer";
 import { InlineK } from "./InlineK";
+
+/** Try WebGL glyph backend; on any failure leave Canvas (xterm default). */
+function tryAttachWebgl(term: Terminal, live: LiveTerm): "webgl" | "canvas" {
+  try {
+    const addon = new WebglAddon();
+    // Context loss → drop WebGL so xterm can keep painting via Canvas.
+    addon.onContextLoss(() => {
+      try {
+        addon.dispose();
+      } catch {
+        /* ignore */
+      }
+      live.renderer = "canvas";
+      live.webglDispose = undefined;
+      publishRendererBadge();
+    });
+    term.loadAddon(addon);
+    live.webglDispose = () => {
+      try {
+        addon.dispose();
+      } catch {
+        /* ignore */
+      }
+    };
+    live.renderer = "webgl";
+    return "webgl";
+  } catch {
+    live.renderer = "canvas";
+    live.webglDispose = undefined;
+    return "canvas";
+  }
+}
+
+/** Status-bar badge: prefer active pane, else any live session. */
+function publishRendererBadge(preferPaneId?: string) {
+  const preferred = preferPaneId ? getLiveTerm(preferPaneId) : undefined;
+  const live =
+    preferred && !preferred.disposed
+      ? preferred
+      : listAllLiveTerms().find((x) => x.live.renderer)?.live;
+  if (!live?.renderer) {
+    setTermRendererLive("n/a");
+    return;
+  }
+  setTermRendererLive(live.renderer);
+}
 
 type Props = {
   paneId: string;
@@ -171,8 +220,27 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
       disposed: false,
       sessionCleanups: [],
       search,
+      renderer: "canvas",
     };
+    // Renderer: auto/webgl try GPU first; canvas forces software path.
+    // Must run AFTER term.open() so the addon has a DOM/canvas to attach to.
+    const pref = settings.termRenderer ?? "auto";
+    if (pref === "canvas") {
+      live.renderer = "canvas";
+    } else {
+      tryAttachWebgl(term, live);
+    }
     setLiveTerm(paneId, live);
+    publishRendererBadge(paneId);
+    live.sessionCleanups.push(() => {
+      try {
+        live.webglDispose?.();
+      } catch {
+        /* ignore */
+      }
+      // Refresh badge from remaining sessions after this one goes away
+      window.setTimeout(() => publishRendererBadge(), 0);
+    });
 
     // ── Command blocks (OSC 133) + cwd (OSC 7) via xterm's own OSC parser ──
     const tracker = new BlockTracker(paneId);
@@ -598,7 +666,10 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
   }, [paneId]);
 
   useEffect(() => {
-    if (active) getLiveTerm(paneId)?.term.focus();
+    if (active) {
+      getLiveTerm(paneId)?.term.focus();
+      publishRendererBadge(paneId);
+    }
   }, [active, paneId]);
 
   useEffect(() => {
