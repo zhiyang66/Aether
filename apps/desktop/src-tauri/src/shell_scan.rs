@@ -1,7 +1,31 @@
 use serde::Serialize;
 use std::collections::HashSet;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use which::which;
+
+/// Spawn helper processes without flashing a console window (Windows).
+/// Without CREATE_NO_WINDOW, `wsl -l` / which-style probes can briefly open
+/// conhost/Windows Terminal — user-visible flicker + WT "restore session".
+#[cfg(windows)]
+fn hidden_command(bin: &str) -> Command {
+  use std::os::windows::process::CommandExt;
+  const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+  let mut cmd = Command::new(bin);
+  cmd.creation_flags(CREATE_NO_WINDOW)
+    .stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null());
+  cmd
+}
+
+#[cfg(not(windows))]
+fn hidden_command(bin: &str) -> Command {
+  let mut cmd = Command::new(bin);
+  cmd.stdin(Stdio::null())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::null());
+  cmd
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ShellProfile {
@@ -64,11 +88,11 @@ fn push_if_found(
 /// List installed WSL distros (Windows). Names like "Ubuntu-24.04", "Debian".
 #[cfg(windows)]
 fn list_wsl_distros() -> Vec<String> {
-  // Prefer quiet UTF-16 list: `wsl -l -q`
-  let output = Command::new("wsl.exe")
+  // Prefer quiet UTF-16 list: `wsl -l -q` — must be CREATE_NO_WINDOW or WT flashes.
+  let output = hidden_command("wsl.exe")
     .args(["-l", "-q"])
     .output()
-    .or_else(|_| Command::new("wsl").args(["-l", "-q"]).output());
+    .or_else(|_| hidden_command("wsl").args(["-l", "-q"]).output());
 
   let Ok(output) = output else {
     return vec![];

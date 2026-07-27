@@ -308,10 +308,13 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
       const preferredModel =
         settings.aiDefaultModelId || saved?.aiModel || get().aiModel || "";
 
-      // Cap restored tabs to avoid thrashing on multi-tab PTY startup
-      const MAX_RESTORE_TABS = 6;
+      // Cap restored tabs hard: each tab can open multiple ConPTY shells.
+      // Restoring too many at once causes Win11 WT reparent flashes, PS
+      // "restore previous session" windows, and freezes on weak machines.
+      const MAX_RESTORE_TABS = 3;
       if (saved?.tabs?.length) {
-        let tabs = saved.tabs.slice(0, MAX_RESTORE_TABS).map((t) => ({
+        // Prefer keeping the previously active tab in the restored set
+        let tabs = saved.tabs.map((t) => ({
           ...t,
           // ensure no stale pty ids
           layout: stripRuntime(t.layout),
@@ -320,14 +323,45 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
         if (!tabs.find((t) => t.id === activeTabId)) {
           activeTabId = tabs[0]?.id ?? null;
         }
+        if (tabs.length > MAX_RESTORE_TABS) {
+          const active = tabs.find((t) => t.id === activeTabId);
+          const rest = tabs.filter((t) => t.id !== activeTabId);
+          tabs = [
+            ...(active ? [active] : []),
+            ...rest.slice(0, MAX_RESTORE_TABS - (active ? 1 : 0)),
+          ];
+        }
         const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
         let activePaneId = saved.activePaneId;
         if (activeTab && !findLeaf(activeTab.layout, activePaneId || "")) {
           activePaneId = collectLeaves(activeTab.layout)[0]?.id ?? null;
         }
+        // Cap panes inside each restored tab (splits explode ConPTY count)
+        const MAX_RESTORE_PANES = 3;
+        tabs = tabs.map((t) => {
+          const leaves = collectLeaves(t.layout);
+          if (leaves.length <= MAX_RESTORE_PANES) return t;
+          // Keep only the focused/first leaf as a solo layout to avoid spawn storms
+          const keep =
+            leaves.find((l) => l.id === t.activePaneId) || leaves[0];
+          return {
+            ...t,
+            layout: { ...keep, ptyId: undefined },
+            activePaneId: keep.id,
+          };
+        });
+        const restoredActive = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
+        if (
+          !restoredActive ||
+          !findLeaf(restoredActive.layout, activePaneId || "")
+        ) {
+          activePaneId = restoredActive
+            ? collectLeaves(restoredActive.layout)[0]?.id ?? null
+            : null;
+        }
         set({
           tabs,
-          activeTabId,
+          activeTabId: restoredActive?.id ?? null,
           activePaneId,
           nextSerial: Math.max(saved.nextSerial || 1, 1),
           aiOpen: saved.aiOpen ?? true,

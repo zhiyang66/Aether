@@ -1,5 +1,5 @@
 {
-  "version": "1.0.3",
-  "notes": "去掉任务系统；默认对接 GitHub Releases 检查更新；多窗格询问与 Actions 修复；设置搜索、WebGL 终端、状态栏与窗口按钮优化。",
+  "version": "1.0.4",
+  "notes": "修复启动闪屏/系统 PowerShell 弹出与多 PTY 卡死：PS 集成避免 -File 被 WT 抢附、扫描进程 CREATE_NO_WINDOW、恢复会话限制标签/窗格数量。",
   "url": "https://github.com/zhiyang66/Aether/releases/latest"
 }
