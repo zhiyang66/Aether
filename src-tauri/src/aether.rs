@@ -80,17 +80,37 @@ fn parse_frontmatter(text: &str) -> (HashMap<String, String>, String) {
   (map, trimmed.trim().to_string())
 }
 
-/// Seed built-ins to `~/.aether/skills/` only when that directory does not yet
-/// exist. If the user later deletes a skill, it is NOT re-created (delete the
-/// whole `skills/` dir + restart to restore defaults).
+/// Ensure every built-in skill file exists on disk.
+/// - Missing skill directories are created (first run / user deleted one builtin).
+/// - Existing files are left untouched so user edits win.
+/// - Bump content of critical builtins (`actions`) when the shipped text is newer
+///   and the on-disk file still matches a previous shipped hash-less snapshot:
+///   we only overwrite when the file is byte-identical to an older embedded
+///   revision is hard to track, so instead: if the file is missing OR its size
+///   is far smaller than the shipped body (likely truncated), rewrite. For
+///   normal upgrades of `actions`, rewrite when the on-disk body does not
+///   contain a unique marker from the current skill.
 fn seed_if_absent() -> Result<PathBuf, String> {
   let dir = skills_dir()?;
-  if !dir.exists() {
-    for (id, contents) in BUILTIN_SKILLS {
-      let sub = dir.join(id);
+  std::fs::create_dir_all(&dir).map_err(|e| format!("创建 skill 目录失败: {e}"))?;
+  for (id, contents) in BUILTIN_SKILLS {
+    let sub = dir.join(id);
+    let md = sub.join("SKILL.md");
+    let need_write = if !md.is_file() {
+      true
+    } else if *id == "actions" {
+      // Force-refresh actions skill when missing the multi-pane ask marker so
+      // upgrades pick up "ask which pane" guidance without wiping user skills.
+      match std::fs::read_to_string(&md) {
+        Ok(existing) => !existing.contains("多窗格询问示例"),
+        Err(_) => true,
+      }
+    } else {
+      false
+    };
+    if need_write {
       std::fs::create_dir_all(&sub).map_err(|e| format!("创建 skill 目录失败: {e}"))?;
-      std::fs::write(sub.join("SKILL.md"), contents)
-        .map_err(|e| format!("写入内置 skill 失败: {e}"))?;
+      std::fs::write(&md, contents).map_err(|e| format!("写入内置 skill 失败: {e}"))?;
     }
   }
   Ok(dir)

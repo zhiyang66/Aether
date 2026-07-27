@@ -14,31 +14,26 @@ export type AgentAction = {
   note?: string;
 };
 
-const JSON_FENCE =
-  /```(?:json)?\s*(\{[\s\S]*?\}|\[[\s\S]*?\])\s*```/i;
+/** Greedy-enough fence: allow trailing prose after the JSON object/array. */
+const JSON_FENCE_GLOBAL =
+  /```(?:json)?\s*\r?\n?([\s\S]*?)```/gi;
 
-export function parseAgentActions(text: string): AgentAction[] {
-  if (!text?.trim()) return [];
-
-  // 1) Prefer JSON block: { "actions": [ ... ] } or bare array
-  const fence = text.match(JSON_FENCE);
-  if (fence) {
-    try {
-      const raw = JSON.parse(fence[1]) as { actions?: unknown[] } | unknown[];
-      const list = Array.isArray(raw) ? raw : raw.actions;
-      if (Array.isArray(list)) {
-        const parsed = list
-          .map(normalizeAction)
-          .filter((a): a is AgentAction => !!a);
-        if (parsed.length) return dedupeActions(parsed);
-      }
-    } catch {
-      /* fall through */
+function tryParseActionsPayload(src: string): AgentAction[] {
+  const t = src.trim();
+  if (!t) return [];
+  // Direct JSON
+  try {
+    const raw = JSON.parse(t) as { actions?: unknown[] } | unknown[];
+    const list = Array.isArray(raw) ? raw : raw.actions;
+    if (Array.isArray(list)) {
+      const parsed = list.map(normalizeAction).filter((a): a is AgentAction => !!a);
+      if (parsed.length) return dedupeActions(parsed);
     }
+  } catch {
+    /* try extract embedded object */
   }
-
-  // Unfenced {"actions":[...]} somewhere in text
-  const bare = text.match(/\{\s*"actions"\s*:\s*\[[\s\S]*?\]\s*\}/);
+  // Embedded {"actions":[...]} possibly with trailing commas / noise
+  const bare = t.match(/\{\s*"actions"\s*:\s*\[[\s\S]*\]\s*\}/);
   if (bare) {
     try {
       const raw = JSON.parse(bare[0]) as { actions?: unknown[] };
@@ -49,9 +44,38 @@ export function parseAgentActions(text: string): AgentAction[] {
         if (parsed.length) return dedupeActions(parsed);
       }
     } catch {
-      /* fall through */
+      /* ignore */
     }
   }
+  // Bare array of action objects
+  const arr = t.match(/\[\s*\{\s*"type"[\s\S]*\}\s*\]/);
+  if (arr) {
+    try {
+      const list = JSON.parse(arr[0]) as unknown[];
+      if (Array.isArray(list)) {
+        const parsed = list.map(normalizeAction).filter((a): a is AgentAction => !!a);
+        if (parsed.length) return dedupeActions(parsed);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return [];
+}
+
+export function parseAgentActions(text: string): AgentAction[] {
+  if (!text?.trim()) return [];
+
+  // 1) All fenced blocks (model sometimes puts actions in the last of several)
+  const fences = [...text.matchAll(JSON_FENCE_GLOBAL)];
+  for (let i = fences.length - 1; i >= 0; i--) {
+    const parsed = tryParseActionsPayload(fences[i][1] || "");
+    if (parsed.length) return parsed;
+  }
+
+  // 2) Unfenced {"actions":[...]} anywhere
+  const embedded = tryParseActionsPayload(text);
+  if (embedded.length) return embedded;
 
   // 2) Explicit markdown only: "- run #2: cmd" (not bare "1. Yes")
   const out: AgentAction[] = [];

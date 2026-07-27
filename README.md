@@ -183,11 +183,12 @@ npm run dev
 ## 版本与许可
 
 - 版本号以 `package.json` / `src-tauri/tauri.conf.json` 为准（当前 **1.0.2**，应用内「关于」页同步显示）
+- 跨平台桌面应用（Tauri）；本仓库 Release 附带当前环境可产出的安装包，其它平台可从源码构建
 - 发布标签：
   - [`v0.6.0`](https://github.com/zhiyang66/Aether/releases/tag/v0.6.0) — 早期基线
   - [`v1.0.0`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.0) — 1.0 稳定版
-  - [`v1.0.1`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.1) — 窗格寻址 / 审批浮窗 / macOS 红绿灯
-  - [`v1.0.2`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.2) — 当前：设置搜索 / WebGL 终端 / 状态栏与标题栏
+  - [`v1.0.1`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.1) — 窗格寻址 / 审批浮窗 / 红绿灯样式
+  - [`v1.0.2`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.2) — 当前：设置搜索 / WebGL / 多窗格询问与 Actions
 - 仓库许可：见 `src-tauri/Cargo.toml`（MIT）
 
 ---
