@@ -262,16 +262,24 @@ export function AiPanel() {
   ) => {
     const raw = acc || "";
     const { thinking, answer } = splitAgentReply(raw, streamedThinking);
-    // Parse actions from model JSON only (skills teach when to emit)
+    // Parse actions from full raw first (fences may be stripped from answer)
     let actions = parseAgentActions(raw);
-    if (!actions.length && answer) {
-      actions = parseAgentActions(answer);
+    if (!actions.length && answer) actions = parseAgentActions(answer);
+    // Also scan thinking in case the model stuffed JSON there
+    if (!actions.length && thinking) actions = parseAgentActions(thinking);
+
+    // Don't invent targetSerial for reply-only chips (pane picker)
+    actions = actions.map((a) =>
+      a.type === "reply"
+        ? a
+        : { ...a, targetSerial: a.targetSerial ?? focusSerial },
+    );
+
+    let display = answer.trim() || (thinking ? "（见上方思考；正文为空）" : "");
+    // If the model only returned an actions fence, still show a short hint
+    if (!display && actions.length) {
+      display = "请选择下一步：";
     }
-    actions = actions.map((a) => ({
-      ...a,
-      targetSerial: a.targetSerial ?? focusSerial,
-    }));
-    const display = answer.trim() || (thinking ? "（见上方思考；正文为空）" : "");
     if (!display && !thinking) {
       appendAgentMessage(
         {
@@ -286,7 +294,10 @@ export function AiPanel() {
       );
       return;
     }
-    const primary = actions.find((a) => a.command) || actions[0];
+    const primary =
+      actions.find((a) => a.command) ||
+      actions.find((a) => a.type === "reply") ||
+      actions[0];
     appendAgentMessage(
       {
         role: "assistant",
@@ -297,7 +308,7 @@ export function AiPanel() {
         actions: actions.length
           ? actions.map((a) => ({
               type: a.type,
-              targetSerial: a.targetSerial ?? focusSerial,
+              targetSerial: a.targetSerial,
               command: a.command,
               text: a.text,
               label: actionChipLabel(a),
@@ -1218,8 +1229,8 @@ export function AiPanel() {
                       })}
               />
             )}
+            {/* Show actions on every unconsumed assistant message (not only the latest) */}
             {m.role === "assistant" &&
-              m.id === lastAssistantId &&
               !m.actionsConsumed &&
               m.actions &&
               m.actions.length > 0 && (

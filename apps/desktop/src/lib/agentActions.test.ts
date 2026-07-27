@@ -61,4 +61,30 @@ Codex 已启动。
     expect(a[0]).toMatchObject({ command: "1", label: "信任并继续" });
     expect(a[1]).toMatchObject({ command: "2", label: "退出" });
   });
+
+  it("parses reply actions for multi-pane ask", () => {
+    const a = parseAgentActions(`有多个窗格，请选择：
+\`\`\`json
+{"actions":[
+  {"type":"reply","text":"在 WSL（T2:#1）执行","label":"WSL T2"},
+  {"type":"reply","text":"在 PS（T1:#1）执行","label":"PS T1"}
+]}
+\`\`\``);
+    expect(a).toHaveLength(2);
+    expect(a[0].type).toBe("reply");
+    expect(a[0].text).toContain("WSL");
+  });
+
+  it("finds actions in the last of multiple fences", () => {
+    const a = parseAgentActions(`先看这段
+\`\`\`bash
+echo hi
+\`\`\`
+再选窗格
+\`\`\`json
+{"actions":[{"type":"reply","text":"用 T2","label":"T2"}]}
+\`\`\``);
+    expect(a).toHaveLength(1);
+    expect(a[0].label).toBe("T2");
+  });
 });
