@@ -53,7 +53,7 @@ export function compareVersions(a: string, b: string): number {
 }
 
 /** Normalize various feed JSON shapes into RemoteVersion. */
-export function parseUpdatePayload(data: unknown, feedUrl: string): RemoteVersion {
+export function parseUpdatePayload(data: unknown, _feedUrl: string): RemoteVersion {
   if (!data || typeof data !== "object") {
     throw new Error("无效更新源响应");
   }
