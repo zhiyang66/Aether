@@ -31,7 +31,7 @@ describe("preset defaults", () => {
     const s = store({ preset: "balanced" });
     expect(resolveApproval({ tool: "read_pane" }, s).decision).toBe("allow");
     expect(resolveApproval({ tool: "split_pane" }, s).decision).toBe("allow");
-    expect(resolveApproval({ tool: "task_update_step" }, s).decision).toBe("allow");
+    expect(resolveApproval({ tool: "app_settings" }, s).decision).toBe("allow");
     expect(resolveApproval({ tool: "run_command", command: "ls" }, s).decision).toBe("ask");
     expect(
       resolveApproval({ tool: "mcp__fs__read", mcpServer: "fs" }, s).decision,

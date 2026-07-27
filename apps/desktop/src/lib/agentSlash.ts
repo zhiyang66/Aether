@@ -1,6 +1,6 @@
 /**
  * Agent composer slash-commands — only for things that need typed arguments.
- * UI buttons cover: new session, clear, model picker, stop, task panel, history.
+ * UI buttons cover: new session, clear, model picker, stop, history.
  */
 
 export type AgentSlashCommand = {
@@ -13,13 +13,6 @@ export type AgentSlashCommand = {
 };
 
 export const AGENT_SLASH_COMMANDS: AgentSlashCommand[] = [
-  {
-    cmd: "/task",
-    insert: "/task ",
-    label: "/task",
-    desc: "创建多步任务 · 写标题，可换行写步骤",
-    run: "draft",
-  },
   {
     cmd: "/focus",
     insert: "/focus ",

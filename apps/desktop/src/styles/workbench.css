@@ -936,8 +936,11 @@
       overflow: hidden;
     }
     .ai-float-tasks {
-      height: min(420px, calc(100% - 64px));
-      max-height: calc(100% - 64px);
+      height: min(520px, calc(100% - 56px));
+      max-height: calc(100% - 56px);
+    }
+    .ai-float-tasks .task-panel {
+      min-height: 0;
     }
     .ai-float-history {
       height: min(320px, calc(100% - 64px));

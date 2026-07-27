@@ -1,6 +1,6 @@
 # Aether
 
-以 **Agent 为核心**的跨平台终端工作台。本机 Shell 作为执行内核，界面与终端呈现完全自研：多标签、树状分屏、真实 PTY、OSC 133 命令块、任务自治的 Agent、MCP 工具生态、SSH 主机管理、会话录制回放。
+以 **Agent 为核心**的跨平台终端工作台。本机 Shell 作为执行内核，界面与终端呈现完全自研：多标签、树状分屏、真实 PTY、OSC 133 命令块、对话式 Agent（工具循环）、MCP 工具生态、SSH 主机管理、会话录制回放。
 
 **当前版本：`1.0.2`**
 
@@ -35,7 +35,7 @@
 - **流式工具内核**：OpenAI 兼容与 Anthropic 原生双协议；文本 / 思维链流式渲染，工具调用可中途取消（`/stop`）
 - **万能工具组**：读窗格 / 执行命令、分屏 / 标签 / 布局 / 工作区；`app_query` / `app_settings`（含主题、执行模式、API Key 等，写入 `~/.aether/config.json`）；`mcp_manage` / `hosts_manage` / `snippet_manage` / `skill_manage` / `recording` / `broadcast`
 - **内置 Skill（文件标准）**：能力简报以 `~/.aether/skills/<id>/SKILL.md` 存放（YAML frontmatter + markdown）；首次运行播种内置，用户与 Agent（`skill_manage`）均可增删改；设置 → Skill 列表可见
-- **任务自治**：`task_create` 规划 → `run_command(wait_for_exit)` 执行 → 按退出码 `task_update_step` 推进；任务面板实时监督（暂停推进 / 跳转命令块 / 重试）
+- **对话即操作**：直接自然语言描述需求，Agent 连续调用 `run_command` / `new_tab` / `split_pane` 等工具完成，无需单独任务面板
 - **MCP 客户端**：连接 Model Context Protocol server（stdio 本地进程 / streamable HTTP），其工具以 `mcp__server__tool` 命名空间进入 Agent 工具表；调用超时与输出上限保护
 - **分级审批**：保守 / 平衡 / 放手三档预设 + 规则（工具 / 命令通配 / MCP server）；每次系统级操作弹窗「允许一次 / 总是允许 / 拒绝」，危险命令强制升级询问；「总是允许」写入的规则可见可撤销
 - **行内 Ctrl+K**：终端内自然语言 → 单条命令，Enter 插入 / Ctrl+Enter 执行（走危险策略）
@@ -80,7 +80,7 @@
 ```
 ┌──────────────────────────────────────────────────────────┐
 │  呈现层（自研 UI）                                         │
-│  标题栏 · 标签 · 分屏 · Agent · 任务 · 设置 · 命令面板      │
+│  标题栏 · 标签 · 分屏 · Agent · 设置 · 命令面板             │
 │  xterm 画布 · 命令块装饰 · 搜索 · 行内 Ctrl+K · 回放器      │
 ├──────────────────────────────────────────────────────────┤
 │  协议层：ANSI/VT · OSC 7 cwd · OSC 133 命令块 · resize     │
@@ -101,9 +101,8 @@ src/                    前端（React）
   features/workbench/   标签 / 分屏 / Agent 面板 / 状态栏
   features/terminal/    XtermHost · 行内 Ctrl+K · 会话注册表
   features/settings/    设置各面板（Agent / 审批 / MCP / Skill / SSH / 片段…）
-  features/agent/       任务面板
   ipc/                  Tauri 调用封装
-  lib/                  命令块 / 审批 / 任务 / 片段 / MCP / SSH / Skill 等纯逻辑（含单测）
+  lib/                  命令块 / 审批 / 片段 / MCP / SSH / Skill 等纯逻辑（含单测）
   store/                Zustand 状态与持久化（设置写穿 ~/.aether/config.json）
 skills/                 内置 Skill 真源（SKILL.md，编译时 include + Vite 回退）
 src-tauri/              Rust 后端
@@ -173,7 +172,7 @@ npm run dev
 
 ## 质量与范围
 
-- 前端单元测试：`npm test`（Vitest + happy-dom，含命令块 / 审批 / 任务 / 片段 / SSH / Skill / 设置合并等）
+- 前端单元测试：`npm test`（Vitest + happy-dom，含命令块 / 审批 / 片段 / SSH / Skill / 设置合并等）
 - Rust 单元测试：`cargo test --lib`（协议转换 / Shell 注入 / MCP 解析 / 录制格式 / `~/.aether` frontmatter）
 - 门禁：`npm run check`（`tsc` + 测试 + `vite build`）
 - **1.0 明确不做**：SSH 协议自实现、云同步账号、插件市场、系统终端窗体嵌入、自动静默安装更新（更新为提示 + 打开下载页）、Skill 可视化编辑器
