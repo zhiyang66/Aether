@@ -49,6 +49,19 @@ describe("parseUpdatePayload", () => {
     expect(r).toEqual({ version: "1.2.3", notes: "hi", url: "https://x" });
   });
 
+  it("parses the direct installer fields from version.json", () => {
+    const r = parseUpdatePayload(
+      {
+        version: "1.2.3",
+        download_url: "https://github.com/zhiyang66/Aether/releases/download/v1.2.3/Aether_1.2.3_x64-setup.exe",
+        download_name: "Aether_1.2.3_x64-setup.exe",
+      },
+      "https://feed",
+    );
+    expect(r.downloadUrl).toContain("/releases/download/");
+    expect(r.downloadName).toBe("Aether_1.2.3_x64-setup.exe");
+  });
+
   it("parses GitHub releases/latest JSON (github.com, not API)", () => {
     const r = parseUpdatePayload(
       {

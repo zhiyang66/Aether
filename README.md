@@ -2,7 +2,7 @@
 
 以 **Agent 为核心**的跨平台终端工作台。本机 Shell 作为执行内核，界面与终端呈现完全自研：多标签、树状分屏、真实 PTY、OSC 133 命令块、对话式 Agent（工具循环）、MCP 工具生态、SSH 主机管理、会话录制回放。
 
-**当前版本：`1.0.4`**
+**当前版本：`1.0.5`**
 
 | 技术栈 | 用途 |
 |--------|------|
@@ -175,13 +175,13 @@ npm run dev
 - 前端单元测试：`npm test`（Vitest + happy-dom，含命令块 / 审批 / 片段 / SSH / Skill / 设置合并等）
 - Rust 单元测试：`cargo test --lib`（协议转换 / Shell 注入 / MCP 解析 / 录制格式 / `~/.aether` frontmatter）
 - 门禁：`npm run check`（`tsc` + 测试 + `vite build`）
-- **1.0 明确不做**：SSH 协议自实现、云同步账号、插件市场、系统终端窗体嵌入、自动静默安装更新（更新为提示 + 打开下载页）、Skill 可视化编辑器
+- **1.0 明确不做**：SSH 协议自实现、云同步账号、插件市场、系统终端窗体嵌入、自动静默安装更新、Skill 可视化编辑器
 
 ---
 
 ## 版本与许可
 
-- 版本号以 `package.json` / `src-tauri/tauri.conf.json` 为准（当前 **1.0.4**，应用内「关于」页同步显示）
+- 版本号以 `package.json` / `src-tauri/tauri.conf.json` 为准（当前 **1.0.5**，应用内「关于」页同步显示）
 - 跨平台桌面应用（Tauri）；本仓库 Release 附带当前环境可产出的安装包，其它平台可从源码构建
 - 更新检查固定对接 GitHub Releases（`设置 → 关于 → 检查更新`）
 - 发布标签：
@@ -190,7 +190,8 @@ npm run dev
   - [`v1.0.1`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.1) — 窗格寻址 / 审批浮窗 / 红绿灯样式
   - [`v1.0.2`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.2) — 设置搜索 / WebGL / 多窗格与 Actions
   - [`v1.0.3`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.3) — 去掉任务系统 · GitHub 检查更新
-  - [`v1.0.4`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.4) — 当前：启动闪屏 / WT 抢附 / 多 PTY 卡死修复
+  - [`v1.0.4`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.4) — 启动闪屏 / WT 抢附 / 多 PTY 卡死修复
+  - [`v1.0.5`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.5) — 当前：清晰操作轨迹、终端字重与应用内更新
 - 仓库许可：见 `src-tauri/Cargo.toml`（MIT）
 
 ---

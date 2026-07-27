@@ -35,6 +35,94 @@ const EFFORTS = [
   { id: "max" as const, label: "最高 · 最强", short: "最高", delay: 900 },
 ];
 
+type ToolTraceStep = import("../../store/workbenchStore").AiToolTraceStep;
+
+const TOOL_LABELS: Record<string, string> = {
+  list_panes: "查看终端布局",
+  read_pane: "读取终端输出",
+  run_command: "执行命令",
+  split_pane: "创建分屏",
+  new_tab: "新建标签页",
+  close_pane: "关闭窗格",
+  focus_pane: "切换窗格",
+  clear_pane: "清空终端",
+  apply_layout_template: "应用布局",
+  workspace: "处理工作区",
+  app_settings: "更新应用设置",
+};
+
+function parseToolArgs(argsPreview: string): Record<string, unknown> {
+  try {
+    const value: unknown = JSON.parse(argsPreview);
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function shortText(value: unknown, max = 84): string {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return text.length > max ? `${text.slice(0, max - 1)}...` : text;
+}
+
+function traceTarget(args: Record<string, unknown>): string {
+  if (typeof args.pane === "string" && args.pane) return args.pane;
+  if (typeof args.serial === "number") return `#${args.serial}`;
+  return "当前窗格";
+}
+
+function describeToolStep(step: ToolTraceStep): string {
+  const args = parseToolArgs(step.argsPreview ?? "");
+  switch (step.name) {
+    case "list_panes":
+      return "检查当前工作台的标签和窗格";
+    case "read_pane": {
+      const lines = typeof args.lines === "number" ? `${args.lines} 行` : "最近输出";
+      return `${traceTarget(args)} · ${args.blocks ? "命令记录" : lines}`;
+    }
+    case "run_command":
+      return `${traceTarget(args)} · ${shortText(args.command, 96) || "执行命令"}`;
+    case "split_pane":
+      return args.direction === "top_bottom" || args.direction === "v" ? "上下分屏" : "左右分屏";
+    case "new_tab":
+      return typeof args.shell_key === "string" ? `使用 ${args.shell_key}` : "使用默认 Shell";
+    case "apply_layout_template":
+      return args.list ? "查看可用布局" : shortText(args.template_id) || "应用布局模板";
+    case "workspace":
+      return shortText(args.action) || "处理当前工作区";
+    case "app_settings":
+      return "应用新的设置";
+    default:
+      return step.argsPreview ? shortText(step.argsPreview) : "已完成操作";
+  }
+}
+
+function ToolTrace({ steps, live = false }: { steps: ToolTraceStep[]; live?: boolean }) {
+  return (
+    <div className={`msg-tool-trace${live ? " live" : ""}`} aria-label={live ? "正在执行的操作" : "操作记录"}>
+      <div className="msg-tool-trace-title">{live ? "正在操作" : "操作记录"} · {steps.length}</div>
+      <ol className="msg-tool-trace-list">
+        {steps.map((step, i) => (
+          <li key={`${live ? "live" : "saved"}-${i}-${step.name}`} className={`msg-tool-step${step.ok ? " ok" : " fail"}`}>
+            <span className="msg-tool-index">{i + 1}</span>
+            <span className="msg-tool-name">{TOOL_LABELS[step.name] || step.name}</span>
+            <span className={`msg-tool-state${step.ok ? " ok" : " fail"}`}>{step.ok ? "完成" : "失败"}</span>
+            <span className="msg-tool-detail">{describeToolStep(step)}</span>
+            {step.summary && (
+              <details className="msg-tool-output">
+                <summary>查看原始输出</summary>
+                <pre>{step.summary}</pre>
+              </details>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 export function AiPanel() {
   const aiOpen = useWorkbenchStore((s) => s.aiOpen);
   const aiWidth = useWorkbenchStore((s) => s.aiWidth);
@@ -65,7 +153,6 @@ export function AiPanel() {
   const toastMsg = useWorkbenchStore((s) => s.toastMsg);
   const settings = useSettingsStore();
   const showThinking = useSettingsStore((s) => s.showThinking);
-  const patchSettings = useSettingsStore((s) => s.patch);
 
   const [input, setInput] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1106,23 +1193,7 @@ export function AiPanel() {
               </div>
             )}
             {m.role === "assistant" && m.toolTrace && m.toolTrace.length > 0 && (
-              <div className="msg-tool-trace" aria-label="工具调用记录">
-                <div className="msg-tool-trace-title">操作轨迹 · {m.toolTrace.length}</div>
-                <ul className="msg-tool-trace-list">
-                  {m.toolTrace.map((step, i) => (
-                    <li
-                      key={`${m.id}-tool-${i}`}
-                      className={`msg-tool-step${step.ok ? " ok" : " fail"}`}
-                    >
-                      <span className="msg-tool-name">{step.name}</span>
-                      {step.argsPreview ? (
-                        <span className="msg-tool-args">{step.argsPreview}</span>
-                      ) : null}
-                      <span className="msg-tool-sum">{step.summary}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              <ToolTrace steps={m.toolTrace} />
             )}
             {(m.html || m.content) && (
               <div
@@ -1220,20 +1291,7 @@ export function AiPanel() {
               </div>
             )}
             {liveToolTrace.length > 0 && (
-              <div className="msg-tool-trace live" aria-label="正在执行的工具">
-                <div className="msg-tool-trace-title">正在操作…</div>
-                <ul className="msg-tool-trace-list">
-                  {liveToolTrace.map((step, i) => (
-                    <li
-                      key={`live-tool-${i}`}
-                      className={`msg-tool-step${step.ok ? " ok" : " fail"}`}
-                    >
-                      <span className="msg-tool-name">{step.name}</span>
-                      <span className="msg-tool-sum">{step.summary}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+              <ToolTrace steps={liveToolTrace} live />
             )}
             <div
               className="msg-bubble msg-bubble-stream"
@@ -1324,15 +1382,6 @@ export function AiPanel() {
           />
           <div className="ai-composer-bar">
             <div className="ai-composer-right">
-              <button
-                type="button"
-                className={`ai-think-toggle${showThinking ? " on" : ""}`}
-                title={showThinking ? "隐藏思考过程" : "显示思考过程"}
-                aria-pressed={showThinking}
-                onClick={() => patchSettings({ showThinking: !showThinking })}
-              >
-                思考
-              </button>
               <div className={`ai-model-picker${menuOpen ? " open" : ""}`}>
                 <button
                   type="button"

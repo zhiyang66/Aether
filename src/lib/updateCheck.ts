@@ -8,11 +8,16 @@
  * Fallback:
  *   raw.githubusercontent.com/.../public/version.json
  *
- * Custom version.json still supported:
- *   { "version": "1.0.3", "notes": "...", "url": "https://..." }
+ * Custom version.json:
+ *   {
+ *     "version": "1.0.3",
+ *     "notes": "...",
+ *     "downloadUrl": "https://github.com/.../releases/download/v1.0.3/Aether_1.0.3_x64-setup.exe",
+ *     "downloadName": "Aether_1.0.3_x64-setup.exe"
+ *   }
  *
  * Fetch goes through Rust `update_feed_fetch` in Tauri (CSP + proper UA).
- * Never auto-installs.
+ * Downloads are handled by Rust so the desktop app can launch the installer.
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -21,6 +26,10 @@ import { isTauri } from "./window";
 export type RemoteVersion = {
   version: string;
   notes?: string;
+  /** Direct installer URL from version.json. Release page URLs are not installable. */
+  downloadUrl?: string;
+  /** Optional installer filename used for the local temporary download. */
+  downloadName?: string;
   url?: string;
 };
 
@@ -90,11 +99,37 @@ export function parseUpdatePayload(data: unknown, _feedUrl: string): RemoteVersi
   return {
     version: version.replace(/^v/i, ""),
     notes: o.notes != null ? String(o.notes) : undefined,
+    downloadUrl:
+      o.downloadUrl != null
+        ? String(o.downloadUrl)
+        : o.download_url != null
+          ? String(o.download_url)
+          : undefined,
+    downloadName:
+      o.downloadName != null
+        ? String(o.downloadName)
+        : o.download_name != null
+          ? String(o.download_name)
+          : undefined,
     url:
       o.url != null
         ? String(o.url)
         : "https://github.com/zhiyang66/Aether/releases/latest",
   };
+}
+
+/** Download the installer inside the desktop app, then start it and exit. */
+export async function downloadAndInstallUpdate(
+  downloadUrl: string,
+  downloadName?: string,
+): Promise<void> {
+  if (!isTauri()) {
+    throw new Error("应用内安装仅支持桌面客户端");
+  }
+  await invoke<void>("update_download_and_install", {
+    url: downloadUrl,
+    filename: downloadName ?? null,
+  });
 }
 
 /**
@@ -157,23 +192,32 @@ export async function checkForUpdate(opts: {
   if (!url) return { status: "disabled" };
   try {
     let remote: RemoteVersion;
-    try {
-      remote = await loadRemote(url, opts.signal);
-    } catch (primaryErr) {
-      // If default GitHub path fails, try static version.json on the repo
-      const primaryMsg =
-        primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
-      if (url === DEFAULT_UPDATE_FEED) {
-        try {
-          remote = await loadRemote(FALLBACK_VERSION_JSON, opts.signal);
-        } catch (fallbackErr) {
-          const fb =
-            fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
-          throw new Error(friendlyFetchError(`${primaryMsg}；备用源: ${fb}`));
-        }
+    if (url === DEFAULT_UPDATE_FEED) {
+      // Release metadata provides the latest tag, while version.json carries the
+      // direct installer URL. Read both so a successful Release response does
+      // not hide the installer metadata.
+      const [release, manifest] = await Promise.allSettled([
+        loadRemote(DEFAULT_UPDATE_FEED, opts.signal),
+        loadRemote(FALLBACK_VERSION_JSON, opts.signal),
+      ]);
+      if (release.status === "fulfilled" && manifest.status === "fulfilled") {
+        remote =
+          compareVersions(manifest.value.version, release.value.version) >= 0
+            ? manifest.value
+            : release.value;
+      } else if (release.status === "fulfilled") {
+        remote = release.value;
+      } else if (manifest.status === "fulfilled") {
+        remote = manifest.value;
       } else {
-        throw new Error(friendlyFetchError(primaryMsg));
+        const releaseMsg =
+          release.reason instanceof Error ? release.reason.message : String(release.reason);
+        const manifestMsg =
+          manifest.reason instanceof Error ? manifest.reason.message : String(manifest.reason);
+        throw new Error(friendlyFetchError(`${releaseMsg}；备用源: ${manifestMsg}`));
       }
+    } else {
+      remote = await loadRemote(url, opts.signal);
     }
     if (compareVersions(remote.version, opts.current) > 0) {
       return { status: "available", current: opts.current, remote };

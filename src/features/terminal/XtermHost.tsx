@@ -188,6 +188,8 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
       // Emoji / CJK fall back to system color fonts (Segoe UI Emoji etc.) —
       // Cascadia Code alone renders many emoji as tofu (□).
       fontFamily: `"${settings.fontFamily}", Cascadia Code, Consolas, "Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", monospace`,
+      // Match the denser, more legible Agent body text without giving up terminal alignment.
+      fontWeight: 500,
       // Required: without this, theme.background "transparent" is painted as solid black
       allowTransparency: true,
       theme: {
@@ -628,6 +630,7 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
     const op = Math.min(100, Math.max(40, uiOpacity ?? 100)) / 100;
     live.term.options.fontSize = fontSize;
     live.term.options.fontFamily = `"${fontFamily}", Cascadia Code, Consolas, "Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", monospace`;
+    live.term.options.fontWeight = 500;
     live.term.options.cursorBlink = cursorBlink;
     live.term.options.cursorStyle =
       cursorStyle === "bar" ? "bar" : cursorStyle === "underline" ? "underline" : "block";

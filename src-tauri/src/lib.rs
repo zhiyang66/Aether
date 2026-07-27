@@ -8,6 +8,7 @@ mod shell_scan;
 
 use pty_host::{PtyHost, SharedPty};
 use serde::Deserialize;
+use std::io::Write;
 use std::sync::Arc;
 use tauri::State;
 
@@ -266,6 +267,100 @@ async fn update_feed_fetch(url: String) -> Result<String, String> {
   String::from_utf8(bytes.to_vec()).map_err(|e| format!("响应非 UTF-8: {e}"))
 }
 
+fn validate_update_download_url(raw: &str) -> Result<reqwest::Url, String> {
+  let url = reqwest::Url::parse(raw.trim()).map_err(|e| format!("无效下载地址: {e}"))?;
+  if url.scheme() != "https" {
+    return Err("更新安装包必须使用 HTTPS".into());
+  }
+  let host = url
+    .host_str()
+    .ok_or("下载地址缺少主机名")?
+    .to_ascii_lowercase();
+  if host != "github.com" && !host.ends_with(".githubusercontent.com") {
+    return Err("更新安装包必须来自 GitHub Releases".into());
+  }
+  Ok(url)
+}
+
+fn update_installer_name(filename: Option<String>) -> Result<String, String> {
+  let name = filename
+    .as_deref()
+    .and_then(|v| std::path::Path::new(v).file_name())
+    .and_then(|v| v.to_str())
+    .unwrap_or("Aether-update.exe");
+  if name.is_empty() || !name.is_ascii() || name.contains(['/', '\\']) {
+    return Err("无效安装包文件名".into());
+  }
+  let lower = name.to_ascii_lowercase();
+  if !(lower.ends_with(".exe") || lower.ends_with(".msi")) {
+    return Err("仅支持 .exe 或 .msi Windows 安装包".into());
+  }
+  Ok(name.to_owned())
+}
+
+/// Download a GitHub Releases installer, launch it, then close the current app.
+/// The remote feed must provide a direct `downloadUrl`, never a release HTML page.
+#[tauri::command]
+async fn update_download_and_install(
+  app: tauri::AppHandle,
+  url: String,
+  filename: Option<String>,
+) -> Result<(), String> {
+  let initial_url = validate_update_download_url(&url)?;
+  let url_filename = initial_url
+    .path_segments()
+    .and_then(|mut segments| segments.next_back())
+    .filter(|name| !name.is_empty())
+    .map(str::to_owned);
+  let name = update_installer_name(filename.or(url_filename))?;
+  let client = reqwest::Client::builder()
+    .timeout(std::time::Duration::from_secs(10 * 60))
+    .redirect(reqwest::redirect::Policy::limited(10))
+    .user_agent("Aether-Updater/1.0 (+https://github.com/zhiyang66/Aether)")
+    .build()
+    .map_err(|e| format!("HTTP 客户端: {e}"))?;
+  let response = client
+    .get(initial_url)
+    .send()
+    .await
+    .map_err(|e| format!("下载失败: {e}"))?;
+  validate_update_download_url(response.url().as_str())?;
+  if !response.status().is_success() {
+    return Err(format!("下载失败: HTTP {}", response.status()));
+  }
+  const MAX_INSTALLER_SIZE: u64 = 512 * 1024 * 1024;
+  if response.content_length().is_some_and(|size| size > MAX_INSTALLER_SIZE) {
+    return Err("安装包过大（超过 512 MB）".into());
+  }
+  let bytes = response
+    .bytes()
+    .await
+    .map_err(|e| format!("读取安装包失败: {e}"))?;
+  if bytes.len() as u64 > MAX_INSTALLER_SIZE {
+    return Err("安装包过大（超过 512 MB）".into());
+  }
+  let path = std::env::temp_dir().join(format!("aether-update-{}-{name}", uuid::Uuid::new_v4()));
+  let mut file = std::fs::File::create(&path).map_err(|e| format!("创建临时安装包失败: {e}"))?;
+  file
+    .write_all(&bytes)
+    .map_err(|e| format!("写入安装包失败: {e}"))?;
+  file.flush().map_err(|e| format!("保存安装包失败: {e}"))?;
+
+  let extension = path.extension().and_then(|v| v.to_str()).unwrap_or_default();
+  let mut command = if extension.eq_ignore_ascii_case("msi") {
+    let mut command = std::process::Command::new("msiexec");
+    command.arg("/i").arg(&path);
+    command
+  } else {
+    std::process::Command::new(&path)
+  };
+  command
+    .spawn()
+    .map_err(|e| format!("无法启动安装程序: {e}"))?;
+  app.exit(0);
+  Ok(())
+}
+
 #[tauri::command]
 async fn agent_chat(app: tauri::AppHandle, req: agent_api::ChatRequest) -> Result<(), String> {
   agent_api::chat_stream(app, req).await
@@ -330,6 +425,7 @@ pub fn run() {
       agent_chat_tools,
       agent_chat_stream_tools,
       update_feed_fetch,
+      update_download_and_install,
       mcp_host::mcp_connect,
       mcp_host::mcp_disconnect,
       mcp_host::mcp_status,
