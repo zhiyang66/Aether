@@ -19,7 +19,8 @@ const ALLOWED = new Set([
   "a",
 ]);
 
-function escapeText(s: string): string {
+/** Escape &, <, >, " for safe interpolation into an HTML string. */
+export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -33,7 +34,7 @@ export function sanitizeAgentHtml(input: string): string {
 
   // Fast path: no HTML tags at all
   if (!/<[a-zA-Z/!]/.test(input)) {
-    return `<p>${escapeText(input).replace(/\n/g, "<br/>")}</p>`;
+    return `<p>${escapeHtml(input).replace(/\n/g, "<br/>")}</p>`;
   }
 
   if (typeof DOMParser !== "undefined") {
@@ -57,7 +58,7 @@ export function sanitizeAgentHtml(input: string): string {
 
 function serializeSafe(node: Node): string {
   if (node.nodeType === 3 /* TEXT */) {
-    return escapeText(node.textContent || "");
+    return escapeHtml(node.textContent || "");
   }
   if (node.nodeType !== 1 /* ELEMENT */) return "";
   const el = node as Element;
@@ -82,13 +83,13 @@ function serializeSafe(node: Node): string {
   if (tag === "a") {
     const href = el.getAttribute("href") || "";
     if (/^(https?:|mailto:|#)/i.test(href)) {
-      attrs += ` href="${escapeText(href)}"`;
+      attrs += ` href="${escapeHtml(href)}"`;
     }
   }
   if (tag === "span") {
     const style = el.getAttribute("style") || "";
     if (/color\s*:/i.test(style) && !/expression|url\s*\(/i.test(style)) {
-      attrs += ` style="${escapeText(style)}"`;
+      attrs += ` style="${escapeHtml(style)}"`;
     }
   }
 
@@ -118,7 +119,7 @@ function sanitizeByRegex(input: string): string {
       const m = attrs.match(/href\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i);
       const href = m ? m[2] || m[3] || m[4] || "" : "";
       if (/^(https?:|mailto:|#)/i.test(href)) {
-        return `<a href="${escapeText(href)}">`;
+        return `<a href="${escapeHtml(href)}">`;
       }
       return "<a>";
     }

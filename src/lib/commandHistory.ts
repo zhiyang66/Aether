@@ -17,17 +17,23 @@ export function historyScopeKey(shellKey: string): string {
   return shellKey || "any";
 }
 
+// Parsed-once cache: querySuggestions runs on every keystroke and recordCommand
+// on every command, so avoid re-parsing the (up to thousands of entries) JSON.
+let cache: HistoryEntry[] | null = null;
+
 export function loadHistory(): HistoryEntry[] {
+  if (cache) return cache;
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return [];
-    return JSON.parse(raw) as HistoryEntry[];
+    cache = raw ? (JSON.parse(raw) as HistoryEntry[]) : [];
   } catch {
-    return [];
+    cache = [];
   }
+  return cache;
 }
 
 export function saveHistory(entries: HistoryEntry[]) {
+  cache = entries;
   localStorage.setItem(KEY, JSON.stringify(entries));
 }
 
@@ -73,6 +79,7 @@ export function recordCommand(cmd: string, shellKey: string, limit = 5000) {
 }
 
 export function clearHistory() {
+  cache = [];
   localStorage.removeItem(KEY);
 }
 

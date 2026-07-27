@@ -5,7 +5,11 @@ const MAX_LINES = 400;
 
 export function appendPaneOutput(paneId: string, chunk: string) {
   const lines = chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-  let buf = buffers.get(paneId) ?? [];
+  let buf = buffers.get(paneId);
+  if (!buf) {
+    buf = [];
+    buffers.set(paneId, buf);
+  }
   for (const line of lines) {
     if (buf.length && lines.length === 1 && !chunk.endsWith("\n")) {
       // append to last partial line
@@ -14,8 +18,8 @@ export function appendPaneOutput(paneId: string, chunk: string) {
       buf.push(line);
     }
   }
-  if (buf.length > MAX_LINES) buf = buf.slice(-MAX_LINES);
-  buffers.set(paneId, buf);
+  // Trim in place — avoid allocating a fresh 400-element array per chunk at cap.
+  if (buf.length > MAX_LINES) buf.splice(0, buf.length - MAX_LINES);
 }
 
 export function getPaneOutput(paneId: string, maxLines = 80): string {

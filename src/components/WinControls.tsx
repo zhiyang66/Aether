@@ -1,14 +1,85 @@
 import { useWorkbenchStore } from "../store/workbenchStore";
 import { winMinimize, winToggleMaximize } from "../lib/window";
+import { isMacOS } from "../lib/platform";
 
-export function WinControls() {
+/**
+ * Window chrome buttons.
+ * - Windows / Linux: right-side caption buttons (min / max / close)
+ * - macOS: left-side traffic lights (close / min / zoom) so the custom
+ *   titlebar matches system layout when decorations are disabled.
+ */
+export function WinControls({ placement = "auto" }: { placement?: "auto" | "left" | "right" }) {
   const maximized = useWorkbenchStore((s) => s.windowMaximized);
   const setMaximized = useWorkbenchStore((s) => s.setWindowMaximized);
   const toastMsg = useWorkbenchStore((s) => s.toastMsg);
   const requestAppClose = useWorkbenchStore((s) => s.requestAppClose);
+  const mac = isMacOS();
+  const side =
+    placement === "auto" ? (mac ? "left" : "right") : placement;
+
+  if (side === "left" || mac) {
+    return (
+      <div className="win-controls mac-traffic" role="group" aria-label="窗口控制">
+        <button
+          className="traffic-btn close"
+          type="button"
+          title="关闭"
+          aria-label="关闭"
+          onClick={(e) => {
+            e.stopPropagation();
+            requestAppClose();
+          }}
+        >
+          <span className="traffic-glyph" aria-hidden="true">
+            <svg viewBox="0 0 12 12">
+              <path d="M3.5 3.5l5 5M8.5 3.5l-5 5" />
+            </svg>
+          </span>
+        </button>
+        <button
+          className="traffic-btn min"
+          type="button"
+          title="最小化"
+          aria-label="最小化"
+          onClick={(e) => {
+            e.stopPropagation();
+            void winMinimize();
+          }}
+        >
+          <span className="traffic-glyph" aria-hidden="true">
+            <svg viewBox="0 0 12 12">
+              <path d="M2.5 6h7" />
+            </svg>
+          </span>
+        </button>
+        <button
+          className="traffic-btn zoom"
+          type="button"
+          title={maximized ? "还原" : "最大化"}
+          aria-label={maximized ? "还原" : "最大化"}
+          onClick={async (e) => {
+            e.stopPropagation();
+            const next = await winToggleMaximize();
+            if (typeof next === "boolean") setMaximized(next);
+            else setMaximized(!maximized);
+          }}
+        >
+          <span className="traffic-glyph" aria-hidden="true">
+            <svg viewBox="0 0 12 12">
+              {maximized ? (
+                <path d="M4 3.5h4.5V8M3.5 8.5H8V4" />
+              ) : (
+                <path d="M3.5 8.5L8.5 3.5M5 3.5h3.5V7" />
+              )}
+            </svg>
+          </span>
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <div className="win-controls" data-tauri-drag-region={undefined}>
+    <div className="win-controls" role="group" aria-label="窗口控制">
       <button
         className="win-btn"
         type="button"

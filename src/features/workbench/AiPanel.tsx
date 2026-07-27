@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useWorkbenchStore } from "../../store/workbenchStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { buildContextBundle, localAgentReply } from "../../lib/agentLocal";
+import { redactAndTrimContext } from "../../lib/contextRedact";
 import { agentChat, agentChatCancel, agentModelsList } from "../../ipc/pty";
 import { runAgentToolLoop } from "../../lib/agentToolLoop";
 import { isTauri } from "../../lib/window";
@@ -14,8 +15,12 @@ import {
   type AgentAction,
 } from "../../lib/agentActions";
 import { splitAgentReply } from "../../lib/agentReply";
-import { agentSystemFromExtensions, ensureExampleExtension } from "../../lib/extensions";
-import { createTask, planFromText, setActiveTask } from "../../lib/agentTasks";
+import {
+  createTask,
+  formatActiveTaskPrompt,
+  planFromText,
+  setActiveTask,
+} from "../../lib/agentTasks";
 import { AGENT_BASE_PROMPT, formatAgentSkillsPrompt } from "../../lib/agentPrompt";
 import { findLeaf } from "../../lib/layout";
 import { TaskPanel } from "../agent/TaskPanel";
@@ -24,8 +29,12 @@ import {
   slashEnterShouldAccept,
   type AgentSlashCommand,
 } from "../../lib/agentSlash";
+import { AppDialogHost, askConfirm } from "../../components/AppDialog";
 
-/** Effort is UI-only for local mock delay until providers map it to API params. */
+/**
+ * Effort maps to real API params since 0.7: reasoning_effort (OpenAI 兼容) /
+ * thinking budget（Anthropic）。delay 仅用于浏览器 mock 的模拟延迟。
+ */
 const EFFORTS = [
   { id: "low" as const, label: "低 · 快", short: "低", delay: 220 },
   { id: "medium" as const, label: "中 · 均衡", short: "中", delay: 380 },
@@ -44,7 +53,9 @@ export function AiPanel() {
   const aiModels = useWorkbenchStore((s) => s.aiModels);
   const aiModelsStatus = useWorkbenchStore((s) => s.aiModelsStatus);
   const setAiModels = useWorkbenchStore((s) => s.setAiModels);
-  const pane = useWorkbenchStore((s) => s.activePane());
+  // Only the serial is rendered; select the primitive so the panel doesn't
+  // re-render on every cwd/draft mutation of the focused pane's leaf object.
+  const paneSerial = useWorkbenchStore((s) => s.activePane()?.serial ?? null);
   const session = useWorkbenchStore((s) => s.getActiveAgentSession());
   const agentSessions = useWorkbenchStore((s) => s.agentSessions);
   const appendAgentMessage = useWorkbenchStore((s) => s.appendAgentMessage);
@@ -71,6 +82,8 @@ export function AiPanel() {
   const [tasksOpen, setTasksOpen] = useState(false);
   const [taskRefresh, setTaskRefresh] = useState(0);
   const [streamPreview, setStreamPreview] = useState("");
+  /** Throttled HTML for live markdown while streaming (raw text still in streamPreview). */
+  const [streamHtml, setStreamHtml] = useState("");
   const [thinkingPreview, setThinkingPreview] = useState("");
   const [liveToolTrace, setLiveToolTrace] = useState<
     import("../../store/workbenchStore").AiToolTraceStep[]
@@ -84,6 +97,7 @@ export function AiPanel() {
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const streamAccRef = useRef("");
   const thinkingAccRef = useRef("");
+  const streamHtmlTimerRef = useRef<number | null>(null);
   /** Prevent double finish/error messages for the same stream */
   const streamSettledRef = useRef(false);
   /** Session id at send time — replies must not follow UI session switch */
@@ -104,11 +118,49 @@ export function AiPanel() {
     setSlashIdx(0);
   }, [input, slashMatches.length]);
 
+  // Esc closes in-panel floats (tasks / history)
+  useEffect(() => {
+    if (!tasksOpen && !historyOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      setTasksOpen(false);
+      setHistoryOpen(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [tasksOpen, historyOpen]);
+
   useEffect(() => {
     if (messagesRef.current) {
       messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
     }
-  }, [session?.messages.length, agentBusy, streamPreview]);
+  }, [session?.messages.length, agentBusy, streamPreview, streamHtml]);
+
+  // Live markdown: re-render on a short throttle so incomplete fences / bold
+  // update smoothly without running the converter on every token.
+  useEffect(() => {
+    if (!streamPreview) {
+      if (streamHtmlTimerRef.current != null) {
+        window.clearTimeout(streamHtmlTimerRef.current);
+        streamHtmlTimerRef.current = null;
+      }
+      setStreamHtml("");
+      return;
+    }
+    if (streamHtmlTimerRef.current != null) return;
+    streamHtmlTimerRef.current = window.setTimeout(() => {
+      streamHtmlTimerRef.current = null;
+      setStreamHtml(markdownToHtml(streamAccRef.current || streamPreview));
+    }, 48);
+    return () => {
+      if (streamHtmlTimerRef.current != null) {
+        window.clearTimeout(streamHtmlTimerRef.current);
+        streamHtmlTimerRef.current = null;
+      }
+    };
+  }, [streamPreview]);
 
   useEffect(() => {
     const el = resizeRef.current;
@@ -127,14 +179,16 @@ export function AiPanel() {
     const onDown = (ev: PointerEvent) => {
       ev.preventDefault();
       startX = ev.clientX;
-      startW = aiWidth;
+      // Read the current width at drag start rather than closing over aiWidth,
+      // so this effect doesn't re-register listeners on every width change.
+      startW = useWorkbenchStore.getState().aiWidth;
       el.classList.add("dragging");
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
     };
     el.addEventListener("pointerdown", onDown);
     return () => el.removeEventListener("pointerdown", onDown);
-  }, [aiWidth, setAiWidth]);
+  }, [setAiWidth]);
 
   const cleanupStream = () => {
     if (unlistenRef.current) {
@@ -149,7 +203,12 @@ export function AiPanel() {
       window.clearTimeout(mockTimerRef.current);
       mockTimerRef.current = null;
     }
+    if (streamHtmlTimerRef.current != null) {
+      window.clearTimeout(streamHtmlTimerRef.current);
+      streamHtmlTimerRef.current = null;
+    }
     setStreamPreview("");
+    setStreamHtml("");
     setThinkingPreview("");
     streamAccRef.current = "";
     thinkingAccRef.current = "";
@@ -287,6 +346,12 @@ export function AiPanel() {
         toastMsg("动作缺少回复内容");
         return;
       }
+      // Busy: sendWithText would silently drop the message — keep the chip
+      // alive and tell the user instead of consuming it for nothing.
+      if (useWorkbenchStore.getState().agentBusy) {
+        toastMsg("生成中 · 请先停止或等待完成再点击");
+        return;
+      }
       if (messageId) markActionsConsumed(messageId);
       setInput("");
       // Continuations always go to the active session at click time
@@ -389,7 +454,12 @@ export function AiPanel() {
 
     appendAgentMessage({ role: "user", content: text }, chatSessionId);
     setAgentBusy(true);
+    if (streamHtmlTimerRef.current != null) {
+      window.clearTimeout(streamHtmlTimerRef.current);
+      streamHtmlTimerRef.current = null;
+    }
     setStreamPreview("");
+    setStreamHtml("");
     setThinkingPreview("");
     streamAccRef.current = "";
     thinkingAccRef.current = "";
@@ -405,15 +475,83 @@ export function AiPanel() {
     const endpoint = settings.aiEndpoint.trim();
     const model = aiModel || settings.aiDefaultModelId;
 
-    // Real endpoint: prefer tool loop (can run_command / read_pane), fallback to stream
+    // Real endpoint: streaming tool loop (0.7 kernel), fallback to plain stream
     if (endpoint && model && isTauri()) {
       const streamId = nextId("stream");
       setAgentStreamId(streamId);
-      ensureExampleExtension();
+
+      // Listener FIRST: tool-loop rounds stream text/thinking under this id.
+      // ("done" only arrives from the plain-stream fallback path.)
+      try {
+        const un = await listen<{
+          id: string;
+          type: string;
+          text?: string;
+          error?: string;
+        }>("agent://stream", (ev) => {
+          if (ev.payload.id !== streamId) return;
+          if (streamSettledRef.current) return;
+          if (ev.payload.type === "thinking" && ev.payload.text) {
+            thinkingAccRef.current += ev.payload.text;
+            setThinkingPreview(thinkingAccRef.current);
+          }
+          if (ev.payload.type === "delta" && ev.payload.text) {
+            streamAccRef.current += ev.payload.text;
+            setStreamPreview(streamAccRef.current);
+          }
+          if (ev.payload.type === "error") {
+            if (!settleStream()) return;
+            const err = ev.payload.error || "请求失败";
+            appendAgentMessage(
+              { role: "assistant", content: err, html: markdownToHtml(err) },
+              chatSessionId,
+            );
+            cleanupStream();
+          }
+          if (ev.payload.type === "cancelled") {
+            cleanupStream();
+          }
+          if (ev.payload.type === "done") {
+            if (!settleStream()) return;
+            finishAssistant(
+              streamAccRef.current,
+              bundle.focusSerial,
+              thinkingAccRef.current,
+              chatSessionId,
+            );
+            cleanupStream();
+          }
+        });
+        unlistenRef.current = un;
+      } catch {
+        /* listener failure → previews unavailable but loop still works */
+      }
+      // 1.0 项目级上下文：焦点窗格 cwd 向上找 AETHER.md（git root 截止）
+      let projectCtx = "";
+      if (settings.projectContext && isTauri()) {
+        try {
+          const cwd = useWorkbenchStore.getState().activePane()?.cwd || "";
+          if (cwd) {
+            const { invoke } = await import("@tauri-apps/api/core");
+            const hit = await invoke<[string, string] | null>(
+              "project_context_read",
+              { cwd },
+            );
+            if (hit) {
+              // AETHER.md can contain secrets — redact like all other context.
+              projectCtx = `## 项目上下文（${hit[0]}）\n${redactAndTrimContext(hit[1], 4000)}`;
+            }
+          }
+        } catch {
+          /* best-effort */
+        }
+      }
+
       const system = [
         AGENT_BASE_PROMPT,
         formatAgentSkillsPrompt(),
-        agentSystemFromExtensions(),
+        formatActiveTaskPrompt(),
+        projectCtx,
         "注意：终端上下文可能已截断并脱敏（密钥类字段显示为 ***REDACTED***）。",
         `标签页数: ${bundle.tabCount}`,
         `标签列表: ${bundle.tabsLine}`,
@@ -436,10 +574,9 @@ export function AiPanel() {
         { role: "user", content: text },
       ];
 
-      // ── Primary path: tool-calling loop ──
+      // ── Primary path: streaming tool loop (cancellable mid-flight) ──
       let toolFailed = false;
       try {
-        setStreamPreview("正在调用工具…");
         setLiveToolTrace([]);
         const loop = await runAgentToolLoop({
           endpoint,
@@ -447,15 +584,16 @@ export function AiPanel() {
           provider: settings.aiProvider,
           model,
           messages: baseMessages,
-          maxRounds: 5,
+          // Active task = plan-execute loop; give the model room to advance steps
+          maxRounds: formatActiveTaskPrompt() ? 12 : 5,
+          streamId,
+          effort: aiEffort,
           cb: {
             shouldAbort: () => streamSettledRef.current,
             onStatus: (msg) => {
-              if (!streamSettledRef.current) setStreamPreview(msg);
-            },
-            onDelta: (t) => {
-              streamAccRef.current = t;
-              if (!streamSettledRef.current) setStreamPreview(t);
+              if (!streamSettledRef.current && !streamAccRef.current) {
+                setStreamPreview(msg);
+              }
             },
             onToolEnd: (step) => {
               setLiveToolTrace((prev) => [
@@ -470,6 +608,22 @@ export function AiPanel() {
             },
           },
         });
+        if (loop.cancelled) {
+          // Stop button already settled + wrote the partial message; this
+          // handles cancellation arriving without user stop (edge case).
+          if (settleStream()) {
+            finishAssistant(
+              loop.text || streamAccRef.current,
+              bundle.focusSerial,
+              thinkingAccRef.current,
+              chatSessionId,
+              loop.trace,
+            );
+          }
+          cleanupStream();
+          setLiveToolTrace([]);
+          return;
+        }
         const bad =
           !loop.text ||
           /error decoding response body|TOOLS_UNSUPPORTED|JSON 解析失败|空响应体/i.test(
@@ -479,7 +633,7 @@ export function AiPanel() {
           finishAssistant(
             loop.text,
             bundle.focusSerial,
-            "",
+            thinkingAccRef.current,
             chatSessionId,
             loop.trace,
           );
@@ -500,60 +654,15 @@ export function AiPanel() {
         setStreamPreview(`工具通道不可用，改用流式… (${hint.slice(0, 80)})`);
       }
 
-      // Reset settle so stream fallback can complete
+      // Reset settle so stream fallback can complete (listener stays registered)
       if (toolFailed) {
         streamSettledRef.current = false;
         streamAccRef.current = "";
         thinkingAccRef.current = "";
       }
 
-      // ── Fallback: classic stream (no tools) ──
+      // ── Fallback: classic stream (no tools; "done" event finalizes) ──
       try {
-        const un = await listen<{
-          id: string;
-          type: string;
-          text?: string;
-          error?: string;
-        }>("agent://stream", (ev) => {
-          if (ev.payload.id !== streamId) return;
-          if (streamSettledRef.current) return;
-          if (ev.payload.type === "thinking" && ev.payload.text) {
-            thinkingAccRef.current += ev.payload.text;
-            setThinkingPreview(thinkingAccRef.current);
-          }
-          if (ev.payload.type === "delta" && ev.payload.text) {
-            streamAccRef.current += ev.payload.text;
-            setStreamPreview(streamAccRef.current);
-          }
-          if (ev.payload.type === "error") {
-            if (!settleStream()) return;
-            const err = ev.payload.error || "请求失败";
-            appendAgentMessage(
-              {
-                role: "assistant",
-                content: err,
-                html: markdownToHtml(err),
-              },
-              chatSessionId,
-            );
-            cleanupStream();
-          }
-          if (ev.payload.type === "cancelled") {
-            cleanupStream();
-          }
-          if (ev.payload.type === "done") {
-            if (!settleStream()) return;
-            finishAssistant(
-              streamAccRef.current,
-              bundle.focusSerial,
-              thinkingAccRef.current,
-              chatSessionId,
-            );
-            cleanupStream();
-          }
-        });
-        unlistenRef.current = un;
-
         await agentChat({
           endpoint,
           apiKey: settings.aiApiKey,
@@ -626,7 +735,11 @@ export function AiPanel() {
     const title = (lines[0] || "未命名任务").slice(0, 48) || "未命名任务";
     const stepSrc = lines.slice(1).join("\n").trim() || body.trim() || title;
     const steps = planFromText(stepSrc);
-    const task = createTask(title, steps.length ? steps : planFromText(title));
+    const task = createTask(
+      title,
+      steps.length ? steps : planFromText(title),
+      useWorkbenchStore.getState().activeAgentSessionId ?? undefined,
+    );
     setActiveTask(task.id);
     setTasksOpen(true);
     setTaskRefresh((n) => n + 1);
@@ -699,10 +812,87 @@ export function AiPanel() {
     });
   };
 
+  // 0.8: "AI 诊断" from a failed command block → send block context to agent.
+  // Ref keeps the latest sendWithText (its closure holds current settings).
+  const sendWithTextRef = useRef<((t: string) => Promise<void>) | null>(null);
+  sendWithTextRef.current = sendWithText;
+  useEffect(() => {
+    const onDiagnose = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ paneId: string; blockId: string }>)
+        .detail;
+      if (!detail) return;
+      if (useWorkbenchStore.getState().agentBusy) {
+        toastMsg("生成中 · 请先停止或等待完成再诊断");
+        return;
+      }
+      void (async () => {
+        const [{ getBlocks, blockHeader, readBlockOutput }, { getLiveTerm }] =
+          await Promise.all([
+            import("../../lib/commandBlocks"),
+            import("../terminal/termRegistry"),
+          ]);
+        const block = getBlocks(detail.paneId).find(
+          (b) => b.id === detail.blockId,
+        );
+        if (!block) {
+          toastMsg("命令块已不存在");
+          return;
+        }
+        const live = getLiveTerm(detail.paneId);
+        const out = live ? readBlockOutput(live.term, block, 120) : null;
+        const st = useWorkbenchStore.getState();
+        let serial = "";
+        for (const t of st.tabs) {
+          const leaf = findLeaf(t.layout, detail.paneId);
+          if (leaf) {
+            serial = `#${leaf.serial}`;
+            break;
+          }
+        }
+        const prompt = [
+          `请诊断窗格 ${serial} 中这条失败的命令，解释原因并给出修复建议：`,
+          "",
+          "```",
+          blockHeader(block),
+          ...(out ? [redactAndTrimContext(out, 4000)] : ["（输出已不在缓冲区）"]),
+          "```",
+        ].join("\n");
+        void sendWithTextRef.current?.(prompt);
+      })();
+    };
+    // Generic entry: palette items can send a prepared prompt to the agent
+    const onSend = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ text: string }>).detail;
+      if (!detail?.text) return;
+      if (useWorkbenchStore.getState().agentBusy) {
+        toastMsg("生成中 · 请先停止或等待完成");
+        return;
+      }
+      void sendWithTextRef.current?.(detail.text);
+    };
+    window.addEventListener("sw:ai-diagnose", onDiagnose);
+    window.addEventListener("sw:ai-send", onSend);
+    return () => {
+      window.removeEventListener("sw:ai-diagnose", onDiagnose);
+      window.removeEventListener("sw:ai-send", onSend);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const send = () => {
     const text = input.trim();
     if (!text) return;
-    if (agentBusy && !/^\/stop\b/i.test(text)) return;
+    // /stop works even while busy — equivalent to the Stop button
+    if (/^\/stop\b/i.test(text)) {
+      setInput("");
+      if (useWorkbenchStore.getState().agentBusy) {
+        void stopGeneration();
+      } else {
+        toastMsg("当前没有正在生成的回复");
+      }
+      return;
+    }
+    if (agentBusy) return;
 
     // 1) Completing slash menu with prefix only → accept selection
     if (
@@ -782,7 +972,7 @@ export function AiPanel() {
           </button>
           <button
             type="button"
-            className="icon-btn"
+            className={`icon-btn${historyOpen ? " active" : ""}`}
             title="历史会话"
             aria-label="历史会话"
             style={{ width: 28, height: 28, minWidth: 28, minHeight: 28 }}
@@ -803,7 +993,24 @@ export function AiPanel() {
             aria-label="清空当前会话"
             style={{ width: 28, height: 28, minWidth: 28, minHeight: 28 }}
             onClick={() => {
-              clearActiveAgentMessages();
+              void (async () => {
+                if (agentBusy) {
+                  toastMsg("生成中，请先停止再清空");
+                  return;
+                }
+                const n = session?.messages.length ?? 0;
+                if (n === 0) {
+                  toastMsg("当前会话已是空的");
+                  return;
+                }
+                const ok = await askConfirm("清空当前会话？", {
+                  message: `将删除本会话中的 ${n} 条消息，此操作不可撤销。`,
+                  danger: true,
+                  okLabel: "清空",
+                  cancelLabel: "取消",
+                });
+                if (ok) clearActiveAgentMessages();
+              })();
             }}
           >
             <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
@@ -830,96 +1037,108 @@ export function AiPanel() {
             </svg>
           </button>
           <span className="ai-header-focus" id="ai-focus-label">
-            焦点 · 窗格 #{pane?.serial ?? "—"}
+            焦点 · 窗格 #{paneSerial ?? "—"}
           </span>
         </div>
       </div>
 
-      <TaskPanel
-        open={tasksOpen}
-        onClose={() => setTasksOpen(false)}
-        refreshKey={taskRefresh}
-      />
-
+      {/* Task / history: floating cards inside Agent panel only (not layout push-down) */}
+      {(tasksOpen || historyOpen) && (
+        <div
+          className="ai-float-scrim"
+          onMouseDown={() => {
+            setTasksOpen(false);
+            setHistoryOpen(false);
+          }}
+        />
+      )}
+      {tasksOpen && (
+        <div
+          className="ai-float-card ai-float-tasks"
+          role="dialog"
+          aria-label="任务"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <TaskPanel
+            open={tasksOpen}
+            onClose={() => setTasksOpen(false)}
+            refreshKey={taskRefresh}
+          />
+        </div>
+      )}
       {historyOpen && (
         <div
-          style={{
-            borderBottom: "1px solid var(--border)",
-            maxHeight: 200,
-            overflow: "auto",
-            background: "var(--surface)",
-            padding: 6,
-          }}
+          className="ai-float-card ai-float-history"
+          role="dialog"
+          aria-label="历史会话"
+          onMouseDown={(e) => e.stopPropagation()}
         >
-          <input
-            type="search"
-            placeholder="搜索历史会话…"
-            value={historyQuery}
-            onChange={(e) => setHistoryQuery(e.target.value)}
-            style={{
-              width: "100%",
-              boxSizing: "border-box",
-              marginBottom: 6,
-              padding: "6px 8px",
-              borderRadius: 6,
-              border: "1px solid var(--border)",
-              background: "var(--bg)",
-              color: "var(--fg)",
-              font: "inherit",
-              fontSize: 12,
-            }}
-          />
-          {agentSessions.length === 0 && (
-            <div style={{ color: "var(--muted)", fontSize: 12, padding: 8 }}>暂无历史会话</div>
-          )}
-          {agentSessions
-            .filter((s) => {
-              const q = historyQuery.trim().toLowerCase();
-              if (!q) return true;
-              if (s.title.toLowerCase().includes(q)) return true;
-              return s.messages.some((m) => m.content.toLowerCase().includes(q));
-            })
-            .map((s) => (
-              <div
-                key={s.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  padding: "6px 8px",
-                  borderRadius: 6,
-                  background: s.id === session?.id ? "var(--surface-2)" : "transparent",
-                  cursor: "pointer",
-                  fontSize: 12,
-                }}
-                onClick={() => {
-                  switchAgentSession(s.id);
-                  setHistoryOpen(false);
-                }}
-              >
-                <span
-                  style={{
-                    flex: 1,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {s.title}
-                </span>
-                <button
-                  type="button"
-                  className="pane-close"
-                  title="删除"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    deleteAgentSession(s.id);
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-            ))}
+          <div className="ai-float-head">
+            <strong>历史会话</strong>
+            <button
+              type="button"
+              className="pane-close"
+              aria-label="关闭"
+              onClick={() => setHistoryOpen(false)}
+            >
+              ×
+            </button>
+          </div>
+          <div className="ai-float-body">
+            <input
+              type="search"
+              className="ai-float-search"
+              placeholder="搜索历史会话…"
+              value={historyQuery}
+              onChange={(e) => setHistoryQuery(e.target.value)}
+              autoFocus
+            />
+            {agentSessions.length === 0 && (
+              <div className="ai-float-empty">暂无历史会话</div>
+            )}
+            <div className="ai-float-list">
+              {agentSessions
+                .filter((s) => {
+                  const q = historyQuery.trim().toLowerCase();
+                  if (!q) return true;
+                  if (s.title.toLowerCase().includes(q)) return true;
+                  return s.messages.some((m) => m.content.toLowerCase().includes(q));
+                })
+                .map((s) => (
+                  <div
+                    key={s.id}
+                    className={`ai-float-item${s.id === session?.id ? " active" : ""}`}
+                    onClick={() => {
+                      switchAgentSession(s.id);
+                      setHistoryOpen(false);
+                    }}
+                  >
+                    <span className="ai-float-item-title">{s.title}</span>
+                    <span className="ai-float-item-meta">
+                      {s.messages.length} 条
+                    </span>
+                    <button
+                      type="button"
+                      className="pane-close"
+                      title="删除会话"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void (async () => {
+                          const ok = await askConfirm("删除此会话？", {
+                            message: `「${s.title}」将被永久删除。`,
+                            danger: true,
+                            okLabel: "删除",
+                          });
+                          if (ok) deleteAgentSession(s.id);
+                        })();
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1029,6 +1248,44 @@ export function AiPanel() {
                 ))}
               </div>
             )}
+            {m.role === "assistant" &&
+              m.id === lastAssistantId &&
+              !m.actionsConsumed &&
+              (!m.actions || m.actions.length === 0) &&
+              !!m.cmd?.trim() && (
+              <div className="msg-actions">
+                <button
+                  type="button"
+                  className="chip-btn"
+                  title={m.cmd}
+                  onClick={() =>
+                    runAction(
+                      { type: "insert", targetSerial: m.targetSerial, command: m.cmd },
+                      m.id,
+                    )
+                  }
+                >
+                  插入{m.targetSerial != null ? ` #${m.targetSerial}` : ""}
+                </button>
+                <button
+                  type="button"
+                  className="chip-btn"
+                  title={m.cmd}
+                  onClick={() =>
+                    runAction(
+                      {
+                        type: "insert_and_run",
+                        targetSerial: m.targetSerial,
+                        command: m.cmd,
+                      },
+                      m.id,
+                    )
+                  }
+                >
+                  执行
+                </button>
+              </div>
+            )}
           </div>
         ))}
         {agentBusy && (
@@ -1059,11 +1316,18 @@ export function AiPanel() {
               </div>
             )}
             <div
-              className="msg-bubble"
+              className="msg-bubble msg-bubble-stream"
               style={{ color: streamPreview ? "var(--fg)" : "var(--muted)" }}
             >
               {streamPreview ? (
-                <span className="msg-stream-live">{streamPreview}</span>
+                streamHtml ? (
+                  <div
+                    className="msg-stream-live md"
+                    dangerouslySetInnerHTML={{ __html: streamHtml }}
+                  />
+                ) : (
+                  <span className="msg-stream-live">{streamPreview}</span>
+                )
               ) : showThinking && thinkingPreview ? (
                 "生成回复…"
               ) : (
@@ -1132,7 +1396,8 @@ export function AiPanel() {
               }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                if (agentBusy) return;
+                // busy 时放行 /stop（等价停止按钮）；其余输入由 send() 内部拦截
+                if (agentBusy && !/^\/stop\b/i.test(input.trim())) return;
                 send();
               }
             }}
@@ -1276,7 +1541,7 @@ export function AiPanel() {
                           </svg>
                           回复节奏
                         </button>
-                        <div className="ai-menu-title">本地模拟延迟（云端 API 暂不映射）</div>
+                        <div className="ai-menu-title">推理力度（OpenAI reasoning_effort / Anthropic thinking）</div>
                         {EFFORTS.map((ef) => (
                           <button
                             key={ef.id}
@@ -1327,6 +1592,8 @@ export function AiPanel() {
           </div>
         </div>
       </div>
+      {/* Agent tool approvals stay inside this panel (not full-app overlay) */}
+      <AppDialogHost kinds={["approval"]} variant="panel" />
     </aside>
   );
 }

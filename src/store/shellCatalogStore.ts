@@ -6,6 +6,8 @@ import {
   browserFallbackProfiles,
   mapScanRow,
 } from "../lib/shellProfile";
+import { onSshHostsChanged, sshProfiles } from "../lib/sshHosts";
+import { useSettingsStore } from "./settingsStore";
 
 type ShellCatalogState = {
   profiles: ScannedShellProfile[];
@@ -29,14 +31,16 @@ export const useShellCatalogStore = create<ShellCatalogState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       if (!isTauri()) {
-        const profiles = browserFallbackProfiles();
+        const profiles = [...browserFallbackProfiles(), ...sshProfiles()];
         set({ profiles, loading: false, lastScanAt: Date.now() });
         return profiles;
       }
       const rows = await shellScan();
-      const profiles = rows
-        .filter((r) => r.available)
-        .map(mapScanRow);
+      // SSH hosts (1.0) join the catalog as remote profiles
+      const profiles = [
+        ...rows.filter((r) => r.available).map(mapScanRow),
+        ...sshProfiles(),
+      ];
       set({ profiles, loading: false, lastScanAt: Date.now(), error: null });
       return profiles;
     } catch (e) {
@@ -70,6 +74,15 @@ export const useShellCatalogStore = create<ShellCatalogState>((set, get) => ({
   defaultProfile: () => {
     const list = get().profiles;
     if (!list.length) return undefined;
+    // User's default shell (settings) wins; hardcoded priority is only a fallback
+    const pref = useSettingsStore.getState().defaultShell?.trim();
+    if (pref) {
+      const hit =
+        list.find((p) => p.shellKey === pref) ||
+        list.find((p) => p.shellKey.startsWith(`${pref}:`)) ||
+        list.find((p) => p.id === pref);
+      if (hit) return hit;
+    }
     // prefer pwsh, then powershell, then first
     return (
       list.find((p) => p.id === "ps-pwsh") ||
@@ -80,3 +93,8 @@ export const useShellCatalogStore = create<ShellCatalogState>((set, get) => ({
     );
   },
 }));
+
+// Host list changes → re-merge catalog (new-tab menu updates immediately)
+onSshHostsChanged(() => {
+  void useShellCatalogStore.getState().scan();
+});

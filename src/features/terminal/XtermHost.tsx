@@ -2,12 +2,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
+import { BlockTracker, clearBlocks, getBlocks, formatDuration } from "../../lib/commandBlocks";
 import { isTauri } from "../../lib/window";
 import { onPtyData, onPtyExit, ptyClose, ptyCreate, ptyResize, ptyWrite } from "../../ipc/pty";
 import { useSettingsStore } from "../../store/settingsStore";
 import { appendPaneOutput, clearPaneOutput } from "../../lib/paneRegistry";
-import { detectCwdFromOutput, stripAnsi } from "../../lib/osc";
+import { detectCwdFromOutput, fileUrlToPath, stripAnsi } from "../../lib/osc";
+import { findLeaf } from "../../lib/layout";
 import { useWorkbenchStore } from "../../store/workbenchStore";
 import { useShellCatalogStore } from "../../store/shellCatalogStore";
 import { recordCommand } from "../../lib/commandHistory";
@@ -22,8 +25,10 @@ import {
   getLiveTerm,
   hasLiveTerm,
   setLiveTerm,
+  type LiveTerm,
 } from "./termRegistry";
 import { resolveTerminalShortcut } from "../../lib/terminalShortcuts";
+import { InlineK } from "./InlineK";
 
 type Props = {
   paneId: string;
@@ -43,6 +48,10 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
   const lineBufRef = useRef(new CommandLineBuffer());
   const [suggestPrefix, setSuggestPrefix] = useState("");
   const [suggestOpen, setSuggestOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [kbarOpen, setKbarOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   // mirror suggestOpen for term.onData closure
   const suggestOpenRef = useRef(false);
   suggestOpenRef.current = suggestOpen;
@@ -71,6 +80,7 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
       if (run) {
         recordCommand(cmd, shellKey, historyLimit);
         notePaneCommand(paneId, cmd);
+        live.blocks?.noteSubmittedCommand(cmd);
         lineBufRef.current.reset();
       } else {
         lineBufRef.current.push(cmd);
@@ -126,7 +136,9 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
             ? "underline"
             : "block",
       fontSize: settings.fontSize,
-      fontFamily: `"${settings.fontFamily}", Cascadia Code, Consolas, monospace`,
+      // Emoji / CJK fall back to system color fonts (Segoe UI Emoji etc.) —
+      // Cascadia Code alone renders many emoji as tofu (□).
+      fontFamily: `"${settings.fontFamily}", Cascadia Code, Consolas, "Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", monospace`,
       // Required: without this, theme.background "transparent" is painted as solid black
       allowTransparency: true,
       theme: {
@@ -142,6 +154,8 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
+    const search = new SearchAddon();
+    term.loadAddon(search);
     term.open(host);
     try {
       fit.fit();
@@ -149,19 +163,101 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
       /* ignore */
     }
 
-    const live = {
+    const live: LiveTerm = {
       term,
       fit,
-      ptyId: null as string | null,
+      ptyId: null,
       host,
       disposed: false,
-      sessionCleanups: [] as Array<() => void>,
+      sessionCleanups: [],
+      search,
     };
     setLiveTerm(paneId, live);
+
+    // ── Command blocks (OSC 133) + cwd (OSC 7) via xterm's own OSC parser ──
+    const tracker = new BlockTracker(paneId);
+    live.blocks = tracker;
+    const osc133 = term.parser.registerOscHandler(133, (payload) => {
+      const done = tracker.handleMark(payload, {
+        marker: () => {
+          try {
+            return term.registerMarker(0);
+          } catch {
+            return null;
+          }
+        },
+        cwd: () => {
+          const st = useWorkbenchStore.getState();
+          for (const tab of st.tabs) {
+            const leaf = findLeaf(tab.layout, paneId);
+            if (leaf) return leaf.cwd || null;
+          }
+          return null;
+        },
+      });
+      if (done) {
+        // Failed block → red gutter line at the command position
+        if (done.exitCode != null && done.exitCode !== 0 && done.marker && !done.marker.isDisposed) {
+          try {
+            const deco = term.registerDecoration({ marker: done.marker });
+            deco?.onRender((el) => {
+              el.classList.add("term-block-fail");
+            });
+          } catch {
+            /* ignore */
+          }
+        }
+        // Long-command completion notification when the window is hidden/unfocused
+        const s = useSettingsStore.getState();
+        const durMs = (done.endedAt ?? Date.now()) - done.startedAt;
+        if (
+          s.notifyOnLongCommand &&
+          durMs >= Math.max(3, s.notifyThresholdSec) * 1000 &&
+          (document.hidden || !document.hasFocus())
+        ) {
+          void notifyBlockDone(
+            done.command || "命令",
+            done.exitCode,
+            formatDuration(durMs),
+          );
+        }
+      }
+      return true;
+    });
+    live.sessionCleanups.push(() => osc133.dispose());
+
+    const osc7 = term.parser.registerOscHandler(7, (payload) => {
+      const cwd = fileUrlToPath(payload);
+      if (cwd) setPaneCwd(paneId, cwd);
+      return true;
+    });
+    live.sessionCleanups.push(() => osc7.dispose());
+    live.sessionCleanups.push(() => clearBlocks(paneId));
 
     // Terminal chords: Ctrl+C (copy | SIGINT), Ctrl+V paste, Ctrl+L clear
     // return false → we handled it (block xterm default); true → pass to xterm/PTY
     term.attachCustomKeyEventHandler((ev) => {
+      // Terminal-local features (search, block jumps) — before generic chords
+      if (ev.type === "keydown") {
+        const mod = ev.ctrlKey || ev.metaKey;
+        if (mod && ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === "f") {
+          ev.preventDefault();
+          setSearchOpen(true);
+          window.setTimeout(() => searchInputRef.current?.focus(), 30);
+          return false;
+        }
+        if (mod && ev.altKey && (ev.key === "ArrowUp" || ev.key === "ArrowDown")) {
+          ev.preventDefault();
+          jumpToBlock(term, paneId, ev.key === "ArrowUp" ? -1 : 1);
+          return false;
+        }
+        // 1.0: inline Ctrl+K natural-language → command
+        if (mod && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === "k") {
+          ev.preventDefault();
+          setKbarOpen(true);
+          return false;
+        }
+      }
       const selection = (() => {
         try {
           return term.getSelection() || "";
@@ -175,6 +271,12 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
       });
 
       if (resolved.action === "pass") return true;
+
+      if (resolved.action === "workbench") {
+        // Block xterm (no control bytes to the shell); do NOT preventDefault —
+        // the event must bubble to the window-level workbench chord handler.
+        return false;
+      }
 
       if (resolved.action === "sigint") {
         // Let xterm emit \x03 via onData → PTY
@@ -248,7 +350,9 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
           /* ignore */
         }
 
-        const settingsCwd = useSettingsStore.getState().cwd;
+        const settingsCwd = useSettingsStore.getState().cwd?.trim() || "";
+        // Prefer a real directory; invalid saved cwd is a common Windows spawn failure
+        const preferredCwd = [settingsCwd, cwd].find((d) => d && d.length > 0) || undefined;
         const prof =
           (profileId ? useShellCatalogStore.getState().getById(profileId) : undefined) ||
           useShellCatalogStore.getState().getByShellKey(shellKey);
@@ -258,6 +362,10 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
         let liveId: string | null = null;
         const earlyChunks: { id: string; data: number[] | Uint8Array }[] = [];
         let cwdProbe = "";
+        // One decoder per session (not per chunk): avoids per-chunk allocation
+        // and, with {stream:true}, correctly joins multibyte chars split across
+        // PTY chunks instead of emitting replacement characters.
+        const decoder = new TextDecoder();
 
         const ingest = (ev: { id: string; data: number[] | Uint8Array }) => {
           if (live.disposed) return;
@@ -269,7 +377,7 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
           const bytes = ev.data instanceof Uint8Array ? ev.data : new Uint8Array(ev.data);
           term.write(bytes);
           try {
-            const text = new TextDecoder().decode(bytes);
+            const text = decoder.decode(bytes, { stream: true });
             cwdProbe = (cwdProbe + text).slice(-4000);
             const cwdHit = detectCwdFromOutput(cwdProbe);
             if (cwdHit) setPaneCwd(paneId, cwdHit);
@@ -290,14 +398,35 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
         });
         live.sessionCleanups.push(unExit);
 
-        const id = await ptyCreate({
+        const createOpts = {
           shellKey: prof?.shellKey || shellKey,
-          cwd: settingsCwd || cwd || undefined,
+          cwd: preferredCwd,
           cols: Math.max(term.cols, 40),
           rows: Math.max(term.rows, 10),
           path: prof?.path,
           args: prof?.args,
-        });
+          integration: useSettingsStore.getState().shellIntegration,
+        };
+
+        let id: string;
+        try {
+          id = await ptyCreate(createOpts);
+        } catch (firstErr) {
+          // Frontend safety net: retry without integration / without cwd
+          const msg = firstErr instanceof Error ? firstErr.message : String(firstErr);
+          term.writeln(`\x1b[33mPTY 首次启动失败，正在回退重试…\x1b[0m`);
+          term.writeln(`\x1b[90m${msg}\x1b[0m`);
+          try {
+            id = await ptyCreate({
+              ...createOpts,
+              integration: false,
+              cwd: undefined,
+            });
+            term.writeln(`\x1b[32m已用兼容模式启动（无 Shell 集成 / 默认目录）\x1b[0m`);
+          } catch (secondErr) {
+            throw secondErr;
+          }
+        }
         if (cancelled || live.disposed) {
           await ptyClose(id);
           return;
@@ -345,6 +474,16 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
           for (const line of lineBufRef.current.push(data)) {
             recordCommand(line, shellKey, historyLimit);
             notePaneCommand(paneId, line);
+            tracker.noteSubmittedCommand(line);
+            // Broadcast members get the same command text for their blocks
+            const bcast = useWorkbenchStore.getState().broadcastPanes;
+            if (bcast.length >= 2 && bcast.includes(paneId)) {
+              for (const otherId of bcast) {
+                if (otherId !== paneId) {
+                  getLiveTerm(otherId)?.blocks?.noteSubmittedCommand(line);
+                }
+              }
+            }
             setSuggestOpen(false);
             setSuggestPrefix("");
           }
@@ -352,10 +491,24 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
           setSuggestPrefix(peek);
           setSuggestOpen(peek.trim().length >= 1);
           void ptyWrite(pid, data);
+          // 0.9 广播输入：本窗格在广播集合中 → 镜像写入其它成员 PTY
+          const bset = useWorkbenchStore.getState().broadcastPanes;
+          if (bset.length >= 2 && bset.includes(paneId)) {
+            for (const otherId of bset) {
+              if (otherId === paneId) continue;
+              const other = getLiveTerm(otherId);
+              if (other && !other.disposed && other.ptyId) {
+                void ptyWrite(other.ptyId, data);
+              }
+            }
+          }
         });
         live.sessionCleanups.push(() => dataDisp.dispose());
       } catch (e) {
         term.writeln(`\x1b[31mPTY 启动失败: ${e instanceof Error ? e.message : e}\x1b[0m`);
+        term.writeln(
+          `\x1b[90m可在 设置 → 常规 关闭「Shell 集成」，或清空默认工作目录后重试。\x1b[0m`,
+        );
       }
     })();
 
@@ -406,7 +559,7 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
     const preset = getPreset(themePreset);
     const op = Math.min(100, Math.max(40, uiOpacity ?? 100)) / 100;
     live.term.options.fontSize = fontSize;
-    live.term.options.fontFamily = `"${fontFamily}", Cascadia Code, Consolas, monospace`;
+    live.term.options.fontFamily = `"${fontFamily}", Cascadia Code, Consolas, "Segoe UI Emoji", "Segoe UI Symbol", "Apple Color Emoji", "Noto Color Emoji", monospace`;
     live.term.options.cursorBlink = cursorBlink;
     live.term.options.cursorStyle =
       cursorStyle === "bar" ? "bar" : cursorStyle === "underline" ? "underline" : "block";
@@ -458,9 +611,92 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
     return () => window.removeEventListener("sw:clear-pane", onClear);
   }, [paneId]);
 
+  const doSearch = (dir: "next" | "prev") => {
+    const live = getLiveTerm(paneId);
+    if (!live?.search || !searchQuery) return;
+    try {
+      if (dir === "next") live.search.findNext(searchQuery, { incremental: false });
+      else live.search.findPrevious(searchQuery);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    try {
+      getLiveTerm(paneId)?.search?.clearDecorations();
+    } catch {
+      /* ignore */
+    }
+    getLiveTerm(paneId)?.term.focus();
+  };
+
   return (
     <div className="terminal-host-wrap">
       <div className="terminal-host" ref={hostRef} data-pane={paneId} />
+      {searchOpen && (
+        <div className="term-search-bar">
+          <input
+            ref={searchInputRef}
+            className="term-search-input"
+            placeholder="搜索缓冲区…"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              const live = getLiveTerm(paneId);
+              if (live?.search && e.target.value) {
+                try {
+                  live.search.findNext(e.target.value, { incremental: true });
+                } catch {
+                  /* ignore */
+                }
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                doSearch(e.shiftKey ? "prev" : "next");
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                closeSearch();
+              }
+            }}
+          />
+          <button type="button" className="term-search-btn" title="上一个 (Shift+Enter)" onClick={() => doSearch("prev")}>
+            ↑
+          </button>
+          <button type="button" className="term-search-btn" title="下一个 (Enter)" onClick={() => doSearch("next")}>
+            ↓
+          </button>
+          <button type="button" className="term-search-btn" title="关闭 (Esc)" onClick={closeSearch}>
+            ×
+          </button>
+        </div>
+      )}
+      <InlineK
+        paneId={paneId}
+        shellKey={shellKey}
+        cwd={cwd || ""}
+        open={kbarOpen}
+        onClose={() => {
+          setKbarOpen(false);
+          getLiveTerm(paneId)?.term.focus();
+        }}
+        onInsert={(text, run) => {
+          const live = getLiveTerm(paneId);
+          if (!live?.ptyId || live.disposed) return;
+          if (run) {
+            // User-initiated run → same channel as action chips (danger policy)
+            useWorkbenchStore.getState().insertToPane(undefined, text, true);
+          } else {
+            live.blocks?.noteSubmittedCommand(text);
+            void ptyWrite(live.ptyId, text);
+          }
+        }}
+      />
       <XtermSuggest
         open={suggestOpen && active}
         prefix={suggestPrefix}
@@ -470,6 +706,66 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
       />
     </div>
   );
+}
+
+/** Scroll to the previous/next command block marker relative to the viewport. */
+function jumpToBlock(term: Terminal, paneId: string, dir: -1 | 1) {
+  const blocks = getBlocks(paneId).filter(
+    (b) => b.marker && !b.marker.isDisposed,
+  );
+  if (!blocks.length) return;
+  const cur = term.buffer.active.viewportY;
+  let target: number | null = null;
+  if (dir < 0) {
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const line = blocks[i].marker!.line;
+      if (line < cur) {
+        target = line;
+        break;
+      }
+    }
+    if (target == null) target = blocks[0].marker!.line;
+  } else {
+    for (const b of blocks) {
+      const line = b.marker!.line;
+      if (line > cur) {
+        target = line;
+        break;
+      }
+    }
+    if (target == null) {
+      term.scrollToBottom();
+      return;
+    }
+  }
+  try {
+    term.scrollToLine(target);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** System notification for a finished long command (window unfocused). */
+async function notifyBlockDone(command: string, exitCode: number | null, duration: string) {
+  try {
+    const {
+      isPermissionGranted,
+      requestPermission,
+      sendNotification,
+    } = await import("@tauri-apps/plugin-notification");
+    let granted = await isPermissionGranted();
+    if (!granted) {
+      granted = (await requestPermission()) === "granted";
+    }
+    if (!granted) return;
+    const ok = exitCode === 0 || exitCode == null;
+    sendNotification({
+      title: ok ? "命令完成" : `命令失败 (exit ${exitCode})`,
+      body: `${command.slice(0, 80)} · ${duration}`,
+    });
+  } catch {
+    /* notification unavailable — ignore */
+  }
 }
 
 /** Permanently destroy PTY + xterm when user closes a pane. */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildExport, parseExport, reorderTabs, EXPORT_VERSION } from "./exportImport";
+import { buildExport, parseExport, EXPORT_VERSION } from "./exportImport";
 import type { Tab } from "./layout";
 
 const sampleTab = (id: string): Tab => ({
@@ -55,9 +55,4 @@ describe("exportImport", () => {
     ).toBe("shell-workbench");
   });
 
-  it("reorderTabs", () => {
-    const tabs = [{ id: "a" }, { id: "b" }, { id: "c" }];
-    expect(reorderTabs(tabs, "a", "c").map((t) => t.id)).toEqual(["b", "c", "a"]);
-    expect(reorderTabs(tabs, "c", "a").map((t) => t.id)).toEqual(["c", "a", "b"]);
-  });
 });

@@ -24,6 +24,10 @@ export const AGENT_BASE_PROMPT = `
 3. 装软件：探测 → 安装 → 再探测 → 中文总结。
 4. 安全：破坏性命令先警告。
 5. CLI 交互提示：用 Actions skill 给一键按钮。
+6. 读输出优先 read_pane blocks=true（结构化命令块：命令/退出码/耗时，省 token 且可只看失败块 failed_only=true）；窗格无块结构时退回普通 read_pane。
+7. 多步骤工作（部署、排查、装环境）→ 先 task_create 规划，再逐步 run_command(wait_for_exit=true) 执行，按真实退出码 task_update_step 推进；任务面板对用户可见。
+8. **跨标签窗格寻址（重要）**：窗格序号 #N **每个标签独立从 1 起**。list_panes 返回 \`T1:#1\`、\`T2:#1\` 等形式。对非当前焦点标签操作时，**必须**传 \`pane="T1:#1"\`（会自动切换标签再执行）；**禁止**只传 \`serial=1\` 去操作另一个标签的 WSL/Shell。典型流程：list_panes → focus_pane(pane="T1:#1") 或直接 run_command(pane="T1:#1", command=...)。
+9. 工具失败后**不要用相同参数死循环重试**；改策略或向用户说明。
 `.trim();
 
 export { formatAgentSkillsPrompt } from "./agentSkills";

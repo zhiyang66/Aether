@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { WinControls } from "../../components/WinControls";
 import { useWorkbenchStore } from "../../store/workbenchStore";
 import { winToggleMaximize } from "../../lib/window";
+import { isMacOS } from "../../lib/platform";
 import logoUrl from "../../assets/logo.png";
 
 export function Titlebar() {
@@ -9,20 +10,24 @@ export function Titlebar() {
   const setAiOpen = useWorkbenchStore((s) => s.setAiOpen);
   const setWindowMaximized = useWorkbenchStore((s) => s.setWindowMaximized);
   const maximized = useWorkbenchStore((s) => s.windowMaximized);
+  const mac = isMacOS();
 
   return (
     <header
-      className="titlebar"
+      className={`titlebar${mac ? " is-mac" : " is-win"}`}
       id="titlebar"
       data-tauri-drag-region
       onDoubleClick={async (e) => {
         const t = e.target as HTMLElement;
-        if (t.closest(".win-btn, .icon-btn, a, button")) return;
+        if (t.closest(".win-btn, .traffic-btn, .icon-btn, a, button")) return;
         const next = await winToggleMaximize();
         if (typeof next === "boolean") setWindowMaximized(next);
         else setWindowMaximized(!maximized);
       }}
     >
+      {/* macOS: traffic lights on the left (system convention) */}
+      {mac && <WinControls placement="left" />}
+
       <div className="titlebar-left" data-tauri-drag-region>
         <div className="app-icon" aria-hidden="true">
           <img src={logoUrl} alt="" draggable={false} />
@@ -56,7 +61,11 @@ export function Titlebar() {
           </svg>
         </Link>
       </div>
-      <WinControls />
+
+      {/* Windows / Linux: caption buttons on the right */}
+      {!mac && <WinControls placement="right" />}
+      {/* macOS: spacer so layout stays balanced (no right caption buttons) */}
+      {mac && <div className="titlebar-mac-spacer" aria-hidden="true" />}
     </header>
   );
 }

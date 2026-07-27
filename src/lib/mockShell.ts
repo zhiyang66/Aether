@@ -2,6 +2,39 @@ import type { ShellKey } from "./shells";
 import type { TermLine } from "./layout";
 
 /** Temporary in-process shell for UI parity before PTY lands. */
+/**
+ * Naive path resolution for the mock shell's `cd` — keeps pane.cwd honest
+ * in browser mode (OSC 7 only exists on the real PTY path).
+ */
+export function resolveMockCwd(cur: string, target: string, shellKey: string): string {
+  const isWin = shellKey === "ps" || shellKey === "cmd" || shellKey.startsWith("ps");
+  const sep = isWin ? "\\" : "/";
+  const home = isWin ? "C:\\Users\\user" : "~";
+  const t = target.replace(/^["']|["']$/g, "").trim();
+  if (!t || t === "~") return home;
+  const normalized = t.replace(/[\\/]+/g, sep);
+  const isAbs = isWin
+    ? /^[a-zA-Z]:/.test(normalized)
+    : normalized.startsWith("/") || normalized.startsWith("~");
+  const full = isAbs ? normalized : `${cur.replace(/[\\/]+$/, "")}${sep}${normalized}`;
+  const segs: string[] = [];
+  for (const seg of full.split(/[\\/]+/)) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") {
+      // keep drive/root segment ("C:" or "~" or first "/" part)
+      if (segs.length > 1 || (segs.length === 1 && !/^([a-zA-Z]:|~)$/.test(segs[0]))) {
+        segs.pop();
+      }
+      continue;
+    }
+    segs.push(seg);
+  }
+  if (!segs.length) return isWin ? cur : "/";
+  const joined = segs.join(sep);
+  if (!isWin && !joined.startsWith("~")) return `/${joined}`.replace(/^\/\//, "/");
+  return joined;
+}
+
 export function mockRunCommand(shellKey: ShellKey, cmd: string): TermLine[] {
   const c = cmd.trim();
   if (!c) return [];

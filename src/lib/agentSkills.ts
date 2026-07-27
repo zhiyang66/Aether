@@ -1,122 +1,204 @@
 /**
- * Agent skills — long-lived capability briefs injected into the system prompt.
- * Prefer teaching the model *when/how* to use tools & actions over client-side hardcoding.
+ * Agent skills — capability briefs injected into the system prompt.
+ *
+ * Skills live as standard files on disk: `~/.aether/skills/<id>/SKILL.md`
+ * (YAML frontmatter + markdown body), the same shape Codex/Claude use. The repo
+ * `skills/<id>/SKILL.md` files are the built-in source of truth; the Rust
+ * backend seeds them into `~/.aether/skills/` on first run, and users may edit
+ * or add their own. This module loads them (from disk in the desktop app, from
+ * the bundled copies in a browser) and caches them so `formatAgentSkillsPrompt`
+ * can stay synchronous.
+ *
+ * Prefer teaching the model *when/how* to use tools & actions over client-side
+ * hardcoding.
  */
+
+import { invoke } from "@tauri-apps/api/core";
+import { isTauri } from "./window";
 
 export type AgentSkill = {
   id: string;
   title: string;
   body: string;
+  /** One-line summary for the Settings → Skills list (display only). */
+  summary?: string;
+  /** Grouping label for the Settings list (display only). */
+  category?: string;
+  /** True for skills shipped with Aether; false for user-authored files. */
+  builtin?: boolean;
 };
 
-/** UI chips under the last assistant message — model must emit JSON deliberately. */
-export const SKILL_ACTIONS: AgentSkill = {
-  id: "actions",
-  title: "UI Actions（一键快捷操作）",
-  body: `
-你可以通过在**最终回复正文之后**附加一个 JSON 代码块，让客户端在消息下显示可点击按钮。
-按钮内容完全由你根据**当前真实终端状态**决定，不要套固定模板。
-
-### 何时应当输出 actions
-只要用户「点一下比再打字更合适」，就输出，例如：
-- 终端停在**交互选择**（数字菜单、Y/n、trust/continue/abort、[Enter] 确认等）
-- 你建议用户**立刻执行/插入**某条命令，并希望一键完成
-- 需要用户**聚焦到某窗格**后再操作
-- 需要用户**发一句固定的后续话**继续对话（reply）
-
-### 何时不要输出
-- 纯解释、闲聊、无下一步操作
-- 你已通过 run_command 做完且用户无需再点任何东西
-
-### 格式（唯一权威；客户端只解析此 JSON，不会猜按钮）
-\`\`\`json
-{
-  "actions": [
-    {"type":"run","targetSerial":1,"command":"<写入终端的内容>","label":"<按钮短文案>"},
-    {"type":"insert","targetSerial":1,"command":"<仅插入不回车>","label":"<文案>"},
-    {"type":"focus","targetSerial":2,"label":"聚焦 #2"},
-    {"type":"reply","text":"<作为用户下一条消息发送>","label":"<文案>"}
-  ]
-}
-\`\`\`
-
-### type 语义
-| type | 点击后 |
-|------|--------|
-| run / insert_and_run | 写入窗格并回车执行 |
-| insert | 只写入不回车 |
-| focus | 聚焦 #N |
-| reply | 把 text 当作用户消息发出（继续对话） |
-
-### 设计原则（灵活，勿套固定套路）
-1. **command/text 必须来自真实场景**：交互提示里出现什么键/选项，就给对应内容；安装场景给真实包管理命令。
-2. **label 用人话**，中文优先，≤16 字，说明意图（不要一律「运行」）。
-3. **targetSerial** 用焦点或你正在操作的窗格；不确定就省略（客户端用焦点）。
-4. 选项 **2～4 个**为宜；互斥选项都列全。
-5. 交互键可以是单字符、数字、短词，也可以是完整 shell 命令——由你判断。
-6. 不要在正文里写「请到终端按 X」却不给 actions；有选择就给按钮。
-`.trim(),
-};
-
-export const SKILL_TOOLS: AgentSkill = {
-  id: "tools",
-  title: "工作台与终端工具（function calling）",
-  body: `
-你可通过 OpenAI tools 调用（客户端会真实执行，不是空想）：
-
-**终端**
-- **list_panes** — 列出窗格
-- **read_pane** — 读输出（装软件/探测后必读）
-- **run_command** — 在窗格执行一条命令
-
-**布局 / 工作台（用户说分屏、新标签时必须用，不要只教点 UI）**
-- **split_pane** — 左右/上下分屏
-- **new_tab** / **close_pane** / **focus_pane** / **clear_pane**
-- **apply_layout_template** — 布局模板（可 list=true）
-- **workspace** — 工作区 list/save/switch
-- **app_settings** — 主题、不透明度、exec_mode、字号、上下文范围、开关 Agent 面板
-
-用户说「帮我左右分个屏 / 换主题 / 保存工作区」→ 直接调工具，不要只回复操作步骤。
-`.trim(),
-};
-
-export const SKILL_WORKBENCH: AgentSkill = {
-  id: "workbench",
-  title: "工作台与应用中枢",
-  body: `
-你是整个 Aether 的操作中枢，不只是 Shell 旁白：
-- 布局：split_pane / new_tab / close_pane / focus_pane / clear_pane / apply_layout_template
-- 工作区：workspace action=list|save|switch
-- 外观与策略：app_settings（theme / opacity / exec_mode / font_size / context_scope / ai_open）
-- 终端：run_command / read_pane
-
-做完用 list_panes 或工具返回结果确认，再用中文简短说明。
-`.trim(),
-};
-
-export const SKILL_INTERACTIVE_CLI: AgentSkill = {
-  id: "interactive-cli",
-  title: "交互式 CLI 流程",
-  body: `
-当 run_command / read_pane 显示程序在等待输入时：
-1. 用中文简要说明程序在问什么、当前窗格 #N。
-2. **用 Actions skill** 为每个合理选项生成按钮（command = 用户应输入的内容）。
-3. 不要代替用户做高风险选择时，把选项都列成按钮，由用户点选。
-4. 用户点按钮后终端会收到对应输入；若仍停在提示，再 read_pane 继续协助。
-`.trim(),
-};
-
-export const BUILTIN_SKILLS: AgentSkill[] = [
-  SKILL_TOOLS,
-  SKILL_WORKBENCH,
-  SKILL_ACTIONS,
-  SKILL_INTERACTIVE_CLI,
+/** Stable display / injection order for the built-in skills. */
+const BUILTIN_ORDER = [
+  "tools",
+  "workbench",
+  "app-control",
+  "mcp-setup",
+  "ssh-hosts",
+  "utilities",
+  "actions",
+  "interactive-cli",
+  "skill-creator",
 ];
 
-/** Flatten skills into system prompt section. */
-export function formatAgentSkillsPrompt(skills: AgentSkill[] = BUILTIN_SKILLS): string {
-  const parts = skills.map(
-    (s) => `### Skill: ${s.title}\n${s.body}`,
-  );
+/**
+ * Parse a `SKILL.md` text into an AgentSkill. Frontmatter is the block between
+ * the first two `---` fences; the rest is the markdown body. CRLF and a leading
+ * BOM are tolerated. Mirrors the Rust `parse_frontmatter`.
+ */
+export function parseSkillFile(text: string, fallbackId = ""): AgentSkill {
+  const normalized = text.replace(/^﻿/, "").replace(/\r\n/g, "\n");
+  const fm: Record<string, string> = {};
+  let body = normalized.trim();
+  const m = normalized.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (m) {
+    for (const line of m[1].split("\n")) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      const idx = t.indexOf(":");
+      if (idx === -1) continue;
+      const key = t.slice(0, idx).trim();
+      const val = t.slice(idx + 1).trim();
+      if (key) fm[key] = val;
+    }
+    body = normalized.slice(m[0].length).trim();
+  }
+  const id = fm.name || fallbackId;
+  return {
+    id,
+    title: fm.title || id,
+    summary: fm.description || undefined,
+    category: fm.category || undefined,
+    body,
+    builtin: true,
+  };
+}
+
+/** Folder name from a glob key like `/skills/tools/SKILL.md` → `tools`. */
+function idFromPath(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  return parts.length >= 2 ? parts[parts.length - 2] : path;
+}
+
+function orderBuiltins(skills: AgentSkill[]): AgentSkill[] {
+  const rank = (id: string) => {
+    const i = BUILTIN_ORDER.indexOf(id);
+    return i === -1 ? BUILTIN_ORDER.length : i;
+  };
+  return [...skills].sort((a, b) => {
+    const ra = rank(a.id);
+    const rb = rank(b.id);
+    return ra !== rb ? ra - rb : a.id.localeCompare(b.id);
+  });
+}
+
+/**
+ * Built-in skills parsed from the bundled repo `skills/**​/SKILL.md` files.
+ * Available synchronously everywhere (browser included) via Vite's glob import;
+ * used as the cache's initial value and the non-desktop fallback.
+ */
+const BUILTIN_RAW = import.meta.glob("/skills/*/SKILL.md", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+}) as Record<string, string>;
+
+export const BUILTIN_SKILLS: AgentSkill[] = orderBuiltins(
+  Object.entries(BUILTIN_RAW).map(([path, text]) =>
+    parseSkillFile(text, idFromPath(path)),
+  ),
+);
+
+/** Module cache — starts as built-ins, refreshed from disk in the desktop app. */
+let cache: AgentSkill[] = BUILTIN_SKILLS;
+
+/** Current skills (cached). */
+export function getSkills(): AgentSkill[] {
+  return cache;
+}
+
+/**
+ * Load skills: from `~/.aether/skills/` in the desktop app (so user edits and
+ * additions take effect), or the bundled built-ins in a browser / on failure.
+ */
+export async function loadSkills(): Promise<AgentSkill[]> {
+  if (!isTauri()) return BUILTIN_SKILLS;
+  try {
+    const files = await invoke<
+      Array<{
+        id: string;
+        title: string;
+        category: string;
+        summary: string;
+        body: string;
+        builtin: boolean;
+      }>
+    >("skills_list");
+    if (!Array.isArray(files) || files.length === 0) return BUILTIN_SKILLS;
+    return files.map((f) => ({
+      id: f.id,
+      title: f.title || f.id,
+      summary: f.summary || undefined,
+      category: f.category || undefined,
+      body: f.body,
+      builtin: f.builtin,
+    }));
+  } catch {
+    return BUILTIN_SKILLS;
+  }
+}
+
+/** Refresh the cache from disk. Call at startup and when the Skills UI opens. */
+export async function refreshSkills(): Promise<AgentSkill[]> {
+  cache = await loadSkills();
+  return cache;
+}
+
+/** Compose a SKILL.md file (frontmatter + body) from skill fields. */
+export function composeSkillFile(s: {
+  id: string;
+  title?: string;
+  category?: string;
+  summary?: string;
+  body: string;
+}): string {
+  const lines = ["---", `name: ${s.id}`];
+  if (s.title) lines.push(`title: ${s.title}`);
+  if (s.category) lines.push(`category: ${s.category}`);
+  if (s.summary) lines.push(`description: ${s.summary}`);
+  lines.push("---", "", s.body.trim(), "");
+  return lines.join("\n");
+}
+
+/**
+ * Write (create/overwrite) a skill to `~/.aether/skills/<id>/SKILL.md`, then
+ * refresh the cache so it takes effect on the next turn. Desktop only.
+ */
+export async function writeSkill(s: {
+  id: string;
+  title?: string;
+  category?: string;
+  summary?: string;
+  body: string;
+}): Promise<string> {
+  if (!isTauri()) throw new Error("写入 Skill 需要桌面环境");
+  const path = await invoke<string>("skill_write", {
+    id: s.id,
+    contents: composeSkillFile(s),
+  });
+  await refreshSkills();
+  return path;
+}
+
+/** Delete a skill directory, then refresh the cache. Desktop only. */
+export async function deleteSkill(id: string): Promise<void> {
+  if (!isTauri()) throw new Error("删除 Skill 需要桌面环境");
+  await invoke("skill_delete", { id });
+  await refreshSkills();
+}
+
+/** Flatten skills into system prompt section. Reads the cache by default. */
+export function formatAgentSkillsPrompt(skills: AgentSkill[] = getSkills()): string {
+  const parts = skills.map((s) => `### Skill: ${s.title}\n${s.body}`);
   return `## Skills（请按需运用，勿机械套模板）\n\n${parts.join("\n\n")}`;
 }

@@ -4,8 +4,11 @@ import { Titlebar } from "./Titlebar";
 import { Tabbar } from "./Tabbar";
 import { PanesHost } from "./TerminalPane";
 import { AiPanel } from "./AiPanel";
+import { Statusbar } from "./Statusbar";
+import { isTauri } from "../../lib/window";
 import { Toast } from "../../components/Toast";
 import { CommandPalette } from "../../components/CommandPalette";
+import { CastPlayer } from "../../components/CastPlayer";
 import { useWorkbenchStore } from "../../store/workbenchStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { collectLeaves } from "../../lib/layout";
@@ -43,6 +46,32 @@ export function WorkbenchPage() {
     return () => window.removeEventListener("sw:open-palette", openPal);
   }, []);
 
+  // 1.0: silent background update check on startup (B13 closed loop)
+  useEffect(() => {
+    const feed = useSettingsStore.getState().updateFeedUrl?.trim();
+    if (!feed) return;
+    const t = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const { checkForUpdate } = await import("../../lib/updateCheck");
+          const version =
+            typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0";
+          const r = await checkForUpdate({ current: version, feedUrl: feed });
+          if (r.status === "available") {
+            useWorkbenchStore
+              .getState()
+              .toastMsg(
+                `发现新版本 ${r.remote.version} · 设置 → 关于 可查看下载`,
+              );
+          }
+        } catch {
+          /* silent */
+        }
+      })();
+    }, 5000);
+    return () => window.clearTimeout(t);
+  }, []);
+
   useEffect(() => {
     // Apply settings-driven AI open only once after settings load
     if (settings.aiOnStart && settings.aiEnabled) {
@@ -55,6 +84,16 @@ export function WorkbenchPage() {
   useEffect(() => {
     document.documentElement.style.setProperty("--term-font-size", `${fontSize}px`);
   }, [fontSize]);
+
+  // Terminal font family channel — consumed by mock terminal (.pane-body);
+  // xterm reads the setting directly in XtermHost.
+  const fontFamily = useSettingsStore((s) => s.fontFamily);
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--term-font-family",
+      `"${fontFamily}", var(--font-mono)`,
+    );
+  }, [fontFamily]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -80,7 +119,9 @@ export function WorkbenchPage() {
         setShellMenuOpen(true);
       }
       if (mod && e.key.toLowerCase() === "w" && !e.shiftKey) {
-        if (inInput && !target?.classList.contains("cmd-input")) return;
+        // xterm focus lives in .xterm-helper-textarea — Ctrl+W must still close the tab there
+        const inXterm = !!target?.classList.contains("xterm-helper-textarea");
+        if (inInput && !inXterm && !target?.classList.contains("cmd-input")) return;
         e.preventDefault();
         if (activeTabId) closeTab(activeTabId);
       }
@@ -173,7 +214,12 @@ export function WorkbenchPage() {
         </div>
         {settings.aiEnabled && aiOpen && <AiPanel />}
       </div>
+      <Statusbar
+        mock={isTauri() ? false : useWorkbenchStore.getState().useMockTerminal}
+        aiOpen={aiOpen}
+      />
       <Toast />
+      <CastPlayer />
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
     </div>
   );

@@ -1,11 +1,37 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorkbenchStore } from "../store/workbenchStore";
-import { useSettingsStore } from "../store/settingsStore";
+import { useSettingsStore, exportSettingsJson } from "../store/settingsStore";
 import { shellMeta, collectLeaves } from "../lib/layout";
-import { allExtensionCommands, ensureExampleExtension } from "../lib/extensions";
-import { loadCustomTemplates } from "../lib/customTemplates";
+import { askConfirm, askPrompt } from "./AppDialog";
+import { deleteCustomTemplate, loadCustomTemplates } from "../lib/customTemplates";
 import { useShellCatalogStore } from "../store/shellCatalogStore";
+import {
+  extractParams,
+  renderSnippet,
+  snippetsForShell,
+  type Snippet,
+} from "../lib/snippets";
+
+/** Fill snippet params via light prompt dialogs, then insert (no run). */
+export async function insertSnippetInteractive(
+  snippet: Snippet,
+  insertToPane: (serial: number | undefined, text: string, run: boolean) => void,
+): Promise<void> {
+  const names = extractParams(snippet.template);
+  const values: Record<string, string> = {};
+  for (const name of names) {
+    const def = snippet.params.find((p) => p.name === name)?.default ?? "";
+    const v = await askPrompt(`片段参数 · ${name}`, {
+      message: `「${snippet.name}」需要参数 ${name}`,
+      defaultValue: def,
+      placeholder: def || name,
+    });
+    if (v == null) return; // cancelled
+    values[name] = v;
+  }
+  insertToPane(undefined, renderSnippet(snippet, values), false);
+}
 
 type Item = {
   id: string;
@@ -25,6 +51,7 @@ export function CommandPalette({
   const nav = useNavigate();
   const [q, setQ] = useState("");
   const [idx, setIdx] = useState(0);
+  const [tab, setTab] = useState<"builtin" | "snippets">("builtin");
   const createTabFromProfile = useWorkbenchStore((s) => s.createTabFromProfile);
   const addPane = useWorkbenchStore((s) => s.addPane);
   const shellProfiles = useShellCatalogStore((s) => s.profiles);
@@ -50,13 +77,19 @@ export function CommandPalette({
   const listWorkspaces = useWorkbenchStore((s) => s.listWorkspaces);
   const insertToPane = useWorkbenchStore((s) => s.insertToPane);
 
-  const items: Item[] = useMemo(() => {
+  const builtinItems: Item[] = useMemo(() => {
+    // Closed palette needs no items; skip the localStorage reads + layout walk.
+    if (!open) return [];
     const list: Item[] = [
       {
         id: "ai-focus",
         label: "聚焦 Agent（工作台中枢）",
         hint: "推荐",
         run: () => {
+          if (!useSettingsStore.getState().aiEnabled) {
+            toastMsg("Agent 已在设置中停用 · 请到 设置 → Agent 启用");
+            return;
+          }
           setAiOpen(true);
           window.setTimeout(() => {
             document.getElementById("ai-input")?.focus();
@@ -139,20 +172,16 @@ export function CommandPalette({
           toastMsg(`主题 · ${next}`);
         },
       },
-      {
-        id: "toggle-mock",
-        label: "切换模拟终端 / 真 PTY 标记",
-        hint: "开发",
-        run: () => {
-          useWorkbenchStore.setState((s) => ({ useMockTerminal: !s.useMockTerminal }));
-          toastMsg("已切换终端模式（需重建窗格生效）");
-        },
-      },
       ...shellProfiles.map((p) => ({
         id: `tab-${p.id}`,
         label: `新建标签 · ${p.name}`,
         run: () => createTabFromProfile(p),
       })),
+      {
+        id: "tpl-single",
+        label: "布局模板 · 单窗格",
+        run: () => applyLayoutTemplate("single"),
+      },
       {
         id: "tpl-dual",
         label: "布局模板 · 左右双屏",
@@ -172,33 +201,122 @@ export function CommandPalette({
         id: "tpl-save",
         label: "保存当前布局为模板…",
         run: () => {
-          const name = window.prompt("模板名称", "我的布局");
-          if (name) saveCurrentAsTemplate(name);
+          void askPrompt("保存布局模板", {
+            message: "输入模板名称",
+            defaultValue: "我的布局",
+          }).then((name) => {
+            if (name) saveCurrentAsTemplate(name);
+          });
         },
       },
-      ...loadCustomTemplates().map((t) => ({
-        id: `ctpl-${t.id}`,
-        label: `自定义模板 · ${t.name}`,
-        run: () => applyCustomTemplate(t.id),
-      })),
-      ...(() => {
-        ensureExampleExtension();
-        return allExtensionCommands().map((c) => ({
-          id: `ext-${c.id}`,
-          label: c.label,
+      ...loadCustomTemplates().flatMap((t) => [
+        {
+          id: `ctpl-${t.id}`,
+          label: `自定义模板 · ${t.name}`,
+          run: () => applyCustomTemplate(t.id),
+        },
+        {
+          id: `ctpl-del-${t.id}`,
+          label: `删除自定义模板 · ${t.name}`,
           run: () => {
-            if (c.runCommand) insertToPane(undefined, c.runCommand, true);
-            else if (c.insertText) insertToPane(undefined, c.insertText, false);
-            else toastMsg("扩展命令无内容");
+            void askConfirm(`删除模板「${t.name}」？`, {
+              danger: true,
+              okLabel: "删除",
+            }).then((ok) => {
+              if (ok) {
+                deleteCustomTemplate(t.id);
+                toastMsg(`已删除模板 · ${t.name}`);
+              }
+            });
           },
-        }));
-      })(),
+        },
+      ]),
+      {
+        id: "rec-toggle",
+        label: "录制当前窗格 · 开始/停止",
+        hint: ".cast",
+        run: () => {
+          void (async () => {
+            const { getLiveTerm } = await import("../features/terminal/termRegistry");
+            const { recordStart, recordStop, recordStatus } = await import(
+              "../lib/recording"
+            );
+            const st = useWorkbenchStore.getState();
+            const paneId = st.activePaneId;
+            const live = paneId ? getLiveTerm(paneId) : undefined;
+            if (!live?.ptyId || live.disposed) {
+              toastMsg("焦点窗格没有活动的 PTY 会话");
+              return;
+            }
+            try {
+              if (await recordStatus(live.ptyId)) {
+                const p = await recordStop(live.ptyId);
+                if (p) {
+                  localStorage.setItem("sw-last-cast", p);
+                  toastMsg(`录像已保存: ${p}`);
+                }
+              } else {
+                const p = await recordStart(
+                  live.ptyId,
+                  live.term.cols,
+                  live.term.rows,
+                );
+                localStorage.setItem("sw-last-cast", p);
+                toastMsg(`开始录制 → ${p}`);
+              }
+            } catch (e) {
+              toastMsg(`录制失败: ${e instanceof Error ? e.message : e}`);
+            }
+          })();
+        },
+      },
+      {
+        id: "rec-play",
+        label: "打开录像回放…",
+        run: () => {
+          void askPrompt("打开录像", {
+            message: "输入 .cast 文件完整路径",
+            defaultValue: localStorage.getItem("sw-last-cast") ?? "",
+            placeholder: "~/aether-recordings/aether-*.cast",
+          }).then((p) => {
+            if (p?.trim()) {
+              window.dispatchEvent(
+                new CustomEvent("sw:open-cast", { detail: { path: p.trim() } }),
+              );
+            }
+          });
+        },
+      },
+      {
+        id: "aether-md",
+        label: "为当前项目创建 AETHER.md（Agent 起草）",
+        run: () => {
+          if (!useSettingsStore.getState().aiEnabled) {
+            toastMsg("需要启用 Agent（设置 → Agent）");
+            return;
+          }
+          setAiOpen(true);
+          window.setTimeout(() => {
+            window.dispatchEvent(
+              new CustomEvent("sw:ai-send", {
+                detail: {
+                  text: "请查看当前焦点窗格的 cwd 与目录结构（可 run_command 列目录），然后在项目根目录起草一份 AETHER.md：包含项目简介、目录结构说明、常用命令（构建/测试/运行）、注意事项。先给我看内容，确认后再写入文件。",
+                },
+              }),
+            );
+          }, 80);
+        },
+      },
       {
         id: "ws-save",
         label: "保存当前为工作区…",
         run: () => {
-          const name = window.prompt("工作区名称", "我的项目");
-          if (name) saveWorkspace(name);
+          void askPrompt("保存工作区", {
+            message: "输入工作区名称",
+            defaultValue: "我的项目",
+          }).then((name) => {
+            if (name) saveWorkspace(name);
+          });
         },
       },
       ...listWorkspaces().map((w) => ({
@@ -226,13 +344,12 @@ export function CommandPalette({
       id: "export-settings",
       label: "导出设置 JSON",
       run: () => {
-        const data = localStorage.getItem("sw-settings-v1") || "{}";
-        const blob = new Blob([data], { type: "application/json" });
+        const blob = new Blob([exportSettingsJson()], { type: "application/json" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
         a.download = "shell-workbench-settings.json";
         a.click();
-        toastMsg("已导出设置");
+        toastMsg("已导出设置（已移除密钥字段）");
       },
     });
 
@@ -250,6 +367,7 @@ export function CommandPalette({
 
     return list;
   }, [
+    open,
     aiOpen,
     tabs,
     addPane,
@@ -277,24 +395,41 @@ export function CommandPalette({
     insertToPane,
   ]);
 
+  // User-defined command snippets live in their own tab.
+  const snippetItems: Item[] = useMemo(() => {
+    if (!open) return [];
+    const shellKey = useWorkbenchStore.getState().activePane()?.shellKey || "ps";
+    return snippetsForShell(shellKey).map((s) => ({
+      id: `snip-${s.id}`,
+      label: s.name,
+      hint: s.template.length > 40 ? `${s.template.slice(0, 38)}…` : s.template,
+      run: () => {
+        void insertSnippetInteractive(s, insertToPane);
+      },
+    }));
+  }, [open, insertToPane]);
+
+  const activeItems = tab === "snippets" ? snippetItems : builtinItems;
+
   const filtered = useMemo(() => {
     const qq = q.trim().toLowerCase();
-    if (!qq) return items;
-    return items.filter(
+    if (!qq) return activeItems;
+    return activeItems.filter(
       (i) => i.label.toLowerCase().includes(qq) || (i.hint && i.hint.toLowerCase().includes(qq)),
     );
-  }, [items, q]);
+  }, [activeItems, q]);
 
   useEffect(() => {
     if (open) {
       setQ("");
       setIdx(0);
+      setTab("builtin");
     }
   }, [open]);
 
   useEffect(() => {
     setIdx(0);
-  }, [q]);
+  }, [q, tab]);
 
   if (!open) return null;
 
@@ -306,16 +441,41 @@ export function CommandPalette({
       }}
     >
       <div className="cmd-palette" role="dialog" aria-label="命令面板">
+        <div className="cmd-palette-tabs" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "builtin"}
+            className={`cmd-palette-tab${tab === "builtin" ? " active" : ""}`}
+            onClick={() => setTab("builtin")}
+          >
+            内置命令 <span className="cmd-tab-count">{builtinItems.length}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "snippets"}
+            className={`cmd-palette-tab${tab === "snippets" ? " active" : ""}`}
+            onClick={() => setTab("snippets")}
+          >
+            命令片段 <span className="cmd-tab-count">{snippetItems.length}</span>
+          </button>
+          <kbd className="cmd-tab-hint">Tab 切换</kbd>
+        </div>
         <input
           className="cmd-palette-input"
           autoFocus
-          placeholder="输入命令…（Ctrl+Shift+P）"
+          placeholder={tab === "snippets" ? "搜索命令片段…" : "输入命令…（Ctrl+Shift+P）"}
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Escape") {
               e.preventDefault();
               onClose();
+            }
+            if (e.key === "Tab") {
+              e.preventDefault();
+              setTab((t) => (t === "builtin" ? "snippets" : "builtin"));
             }
             if (e.key === "ArrowDown") {
               e.preventDefault();
@@ -337,7 +497,11 @@ export function CommandPalette({
         />
         <div className="cmd-palette-list">
           {filtered.length === 0 && (
-            <div className="cmd-palette-empty">无匹配命令</div>
+            <div className="cmd-palette-empty">
+              {tab === "snippets" && snippetItems.length === 0
+                ? "暂无命令片段 · 到 设置 → 命令片段 添加，或让 Agent 建"
+                : "无匹配命令"}
+            </div>
           )}
           {filtered.map((item, i) => (
             <button
