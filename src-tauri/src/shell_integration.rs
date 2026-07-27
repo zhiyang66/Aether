@@ -122,13 +122,19 @@ pub fn prepare(shell_key: &str, shell_path: &str, args: &[String]) -> Option<Int
       return None;
     }
     let script = write_script("integration.ps1", PWSH_SCRIPT)?;
-    // Prefer -File over -Command: more reliable under ConPTY, no nested quoting.
-    // -NoExit keeps the interactive session after the script returns.
+    // IMPORTANT (Windows):
+    // Prefer `-NoExit -Command ". 'script.ps1'"` over `-NoExit -File script.ps1`.
+    // The `-File` argv shape is more often reparented into a *visible* Windows
+    // Terminal window (flash + "restore previous session") when WT is the
+    // system default terminal. Dot-source via -Command stays on our ConPTY.
+    // -NoLogo comes from profile args; do NOT use -NoProfile (kills user profile).
+    // -NoExit is required: bare -Command would exit after the script returns.
+    let path_lit = script.display().to_string().replace('\'', "''");
     return Some(Integration {
       extra_args: vec![
         "-NoExit".into(),
-        "-File".into(),
-        script.to_string_lossy().into_owned(),
+        "-Command".into(),
+        format!(". '{path_lit}'"),
       ],
       envs: vec![],
     });
@@ -173,12 +179,15 @@ mod tests {
   use super::*;
 
   #[test]
-  fn pwsh_gets_file_args() {
+  fn pwsh_gets_dot_source_command_args() {
     let i = prepare("ps", "C:/Program Files/PowerShell/7/pwsh.exe", &["-NoLogo".into()]);
     let i = i.expect("pwsh supported");
+    // Must NOT use -File (WT reparent risk on Win11); -NoExit + -Command is OK
+    assert!(!i.extra_args.iter().any(|a| a.eq_ignore_ascii_case("-File")));
     assert_eq!(i.extra_args[0], "-NoExit");
-    assert_eq!(i.extra_args[1], "-File");
+    assert_eq!(i.extra_args[1], "-Command");
     assert!(i.extra_args[2].contains("integration.ps1"));
+    assert!(i.extra_args[2].starts_with(". '"));
   }
 
   #[test]

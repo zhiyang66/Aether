@@ -58,13 +58,18 @@ impl PtyHost {
     cmd.env("TERM", "xterm-256color");
     // Force interactive-ish colors where supported
     cmd.env("COLORTERM", "truecolor");
-    for (k, v) in envs {
-      cmd.env(k, v);
-    }
+    // Keep the child attached to *this* ConPTY, not the Windows Terminal
+    // "default terminal" reparent path (which flashes WT and restores sessions).
     #[cfg(windows)]
     {
-      // Help ConPTY / PowerShell produce a prompt without waiting for extra TTY negotiation
       cmd.env("TERM_PROGRAM", "aether");
+      // WT respects this to avoid treating the process as a "new console session"
+      // that should open a visible WT window with "restore previous session".
+      cmd.env("WT_SESSION", "");
+      cmd.env("WT_PROFILE_ID", "");
+    }
+    for (k, v) in envs {
+      cmd.env(k, v);
     }
 
     let child = pair
