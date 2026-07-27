@@ -7,7 +7,7 @@ import { useWorkbenchStore } from "../../store/workbenchStore";
 import { useShellCatalogStore } from "../../store/shellCatalogStore";
 import { clearHistory } from "../../lib/commandHistory";
 import { isTauri, winToggleMaximize } from "../../lib/window";
-import { isMacOS } from "../../lib/platform";
+import { resolveWindowControlsSide } from "../../lib/platform";
 import { THEME_PRESETS } from "../../lib/themes";
 import { WorkspacePanel } from "./WorkspacePanel";
 import { SnippetsPanel } from "./SnippetsPanel";
@@ -39,21 +39,254 @@ type PanelId =
   | "shortcuts"
   | "about";
 
-const NAV: { id: PanelId; label: string; group: string }[] = [
-  { id: "general", label: "常规", group: "应用" },
-  { id: "shells", label: "Shell 配置", group: "应用" },
-  { id: "hosts", label: "SSH 主机", group: "应用" },
-  { id: "appearance", label: "外观", group: "应用" },
-  { id: "workspaces", label: "工作区", group: "应用" },
-  { id: "ai", label: "Agent", group: "智能" },
-  { id: "approval", label: "审批", group: "智能" },
-  { id: "mcp", label: "MCP", group: "智能" },
-  { id: "skills", label: "Skill", group: "智能" },
-  { id: "completion", label: "命令联想", group: "输入" },
-  { id: "snippets", label: "命令片段", group: "输入" },
-  { id: "shortcuts", label: "快捷键", group: "系统" },
-  { id: "about", label: "关于", group: "系统" },
+type NavItem = {
+  id: PanelId;
+  label: string;
+  group: string;
+  /** Extra searchable terms (settings rows, aliases, English). */
+  keywords: string[];
+};
+
+const NAV: NavItem[] = [
+  {
+    id: "general",
+    label: "常规",
+    group: "应用",
+    keywords: [
+      "启动",
+      "默认 shell",
+      "恢复会话",
+      "打开 agent",
+      "关闭标签",
+      "多标签",
+      "确认关闭",
+      "复制命令块",
+      "平台",
+      "行为",
+      "general",
+      "startup",
+      "restore",
+    ],
+  },
+  {
+    id: "shells",
+    label: "Shell 配置",
+    group: "应用",
+    keywords: [
+      "工作目录",
+      "cwd",
+      "启动命令",
+      "shell 集成",
+      "命令块",
+      "osc",
+      "长命令",
+      "通知",
+      "阈值",
+      "pwsh",
+      "powershell",
+      "bash",
+      "zsh",
+      "cmd",
+      "wsl",
+      "扫描",
+      "shells",
+      "profile",
+    ],
+  },
+  {
+    id: "hosts",
+    label: "SSH 主机",
+    group: "应用",
+    keywords: [
+      "ssh",
+      "远程",
+      "主机",
+      "私钥",
+      "跳板",
+      "port",
+      "端口",
+      "user",
+      "identity",
+      "config",
+      "~/.ssh",
+      "hosts",
+    ],
+  },
+  {
+    id: "appearance",
+    label: "外观",
+    group: "应用",
+    keywords: [
+      "主题",
+      "预设",
+      "不透明度",
+      "透明度",
+      "opacity",
+      "窗口按钮",
+      "红绿灯",
+      "左侧",
+      "右侧",
+      "mac",
+      "windows",
+      "字体",
+      "字号",
+      "光标",
+      "闪烁",
+      "终端渲染",
+      "gpu",
+      "webgl",
+      "canvas",
+      "渲染",
+      "theme",
+      "font",
+      "appearance",
+      "accent",
+    ],
+  },
+  {
+    id: "workspaces",
+    label: "工作区",
+    group: "应用",
+    keywords: ["布局", "项目", "切换", "保存工作区", "workspace", "layout"],
+  },
+  {
+    id: "ai",
+    label: "Agent",
+    group: "智能",
+    keywords: [
+      "api",
+      "endpoint",
+      "端点",
+      "key",
+      "密钥",
+      "模型",
+      "model",
+      "openai",
+      "anthropic",
+      "上下文",
+      "context",
+      "危险命令",
+      "执行方式",
+      "当前标签",
+      "会话",
+      "快照",
+      "aether.md",
+      "项目上下文",
+      "ai",
+      "agent",
+      "llm",
+    ],
+  },
+  {
+    id: "approval",
+    label: "审批",
+    group: "智能",
+    keywords: [
+      "允许",
+      "拒绝",
+      "规则",
+      "保守",
+      "平衡",
+      "放手",
+      "工具",
+      "approval",
+      "permission",
+      "confirm",
+    ],
+  },
+  {
+    id: "mcp",
+    label: "MCP",
+    group: "智能",
+    keywords: [
+      "model context protocol",
+      "stdio",
+      "http",
+      "server",
+      "工具",
+      "mcp",
+      "连接",
+    ],
+  },
+  {
+    id: "skills",
+    label: "Skill",
+    group: "智能",
+    keywords: ["技能", "skill", "~/.aether/skills", "skill.md", "能力"],
+  },
+  {
+    id: "completion",
+    label: "命令联想",
+    group: "输入",
+    keywords: [
+      "建议",
+      "历史",
+      "常用",
+      "模糊",
+      "匹配",
+      "suggest",
+      "completion",
+      "history",
+      "autocomplete",
+      "容量",
+      "分桶",
+    ],
+  },
+  {
+    id: "snippets",
+    label: "命令片段",
+    group: "输入",
+    keywords: ["snippet", "模板", "参数", "片段", "快捷命令", "snippet"],
+  },
+  {
+    id: "shortcuts",
+    label: "快捷键",
+    group: "系统",
+    keywords: [
+      "快捷键",
+      "键盘",
+      "ctrl",
+      "cmd",
+      "快捷",
+      "shortcut",
+      "hotkey",
+      "keymap",
+      "面板",
+      "分屏",
+      "清屏",
+      "粘贴",
+      "复制",
+    ],
+  },
+  {
+    id: "about",
+    label: "关于",
+    group: "系统",
+    keywords: [
+      "版本",
+      "更新",
+      "version",
+      "update",
+      "检查更新",
+      "about",
+      "release",
+      "许可证",
+      "mit",
+    ],
+  },
 ];
+
+function normSearch(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+/** True if every query token is found in the haystack (substring, case-insensitive). */
+function matchTokens(haystack: string, query: string): boolean {
+  const q = normSearch(query);
+  if (!q) return true;
+  const h = haystack.toLowerCase();
+  return q.split(/\s+/).every((tok) => h.includes(tok));
+}
 
 export function SettingsPage() {
   const nav = useNavigate();
@@ -81,12 +314,20 @@ export function SettingsPage() {
     void ensureShells();
   }, []);
 
-  const filtered = NAV.filter(
-    (n) =>
-      !search.trim() ||
-      n.label.includes(search) ||
-      n.group.includes(search),
-  );
+  const filtered = NAV.filter((n) => {
+    if (!search.trim()) return true;
+    const blob = [n.id, n.label, n.group, ...n.keywords].join(" ");
+    return matchTokens(blob, search);
+  });
+
+  // When search yields a single category, jump there so the panel matches the hit.
+  useEffect(() => {
+    if (!search.trim()) return;
+    if (filtered.length === 1 && filtered[0].id !== panel) {
+      setPanel(filtered[0].id);
+      window.location.hash = filtered[0].id;
+    }
+  }, [search, filtered, panel]);
 
   const refreshModels = async () => {
     const endpoint = s.aiEndpoint.trim().replace(/\/$/, "");
@@ -125,12 +366,13 @@ export function SettingsPage() {
     }
   };
 
-  const mac = isMacOS();
+  const side = resolveWindowControlsSide(s.windowControlsSide);
+  const leftChrome = side === "left";
 
   return (
     <div className={`app${maximized ? " maximized" : " windowed"}`} id="app">
       <header
-        className={`titlebar${mac ? " is-mac" : " is-win"}`}
+        className={`titlebar${leftChrome ? " is-mac" : " is-win"}`}
         data-tauri-drag-region
         onDoubleClick={async (e) => {
           if ((e.target as HTMLElement).closest(".win-btn, .traffic-btn, a, button")) return;
@@ -139,22 +381,48 @@ export function SettingsPage() {
           else setMaximized(!maximized);
         }}
       >
-        {mac && <WinControls placement="left" />}
-        <div className="titlebar-left" data-tauri-drag-region>
-          <div className="app-icon" aria-hidden="true">
-            <img src={logoUrl} alt="" draggable={false} />
-          </div>
-          <div className="app-title">
-            <strong>Aether</strong> · 设置
-          </div>
-        </div>
-        <div className="titlebar-nav">
-          <Link className="nav-link primary" to="/">
-            返回工作台
-          </Link>
-        </div>
-        {!mac && <WinControls placement="right" />}
-        {mac && <div className="titlebar-mac-spacer" aria-hidden="true" />}
+        {leftChrome ? (
+          <>
+            <div className="titlebar-mac-side titlebar-mac-side-left">
+              <WinControls side="left" />
+              <div className="titlebar-drag-fill" data-tauri-drag-region aria-hidden="true" />
+            </div>
+            <div className="titlebar-mac-center" data-tauri-drag-region>
+              <div className="app-icon" aria-hidden="true">
+                <img src={logoUrl} alt="" draggable={false} />
+              </div>
+              <div className="app-title" data-tauri-drag-region>
+                <strong>Aether</strong> · 设置
+              </div>
+            </div>
+            <div className="titlebar-mac-side titlebar-mac-side-right">
+              <div className="titlebar-drag-fill" data-tauri-drag-region aria-hidden="true" />
+              <div className="titlebar-nav">
+                <Link className="nav-link primary" to="/">
+                  返回工作台
+                </Link>
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="titlebar-left" data-tauri-drag-region>
+              <div className="app-icon" aria-hidden="true">
+                <img src={logoUrl} alt="" draggable={false} />
+              </div>
+              <div className="app-title" data-tauri-drag-region>
+                <strong>Aether</strong> · 设置
+              </div>
+            </div>
+            <div className="titlebar-drag-fill" data-tauri-drag-region aria-hidden="true" />
+            <div className="titlebar-nav">
+              <Link className="nav-link primary" to="/">
+                返回工作台
+              </Link>
+            </div>
+            <WinControls side="right" />
+          </>
+        )}
       </header>
 
       <div className="body">
@@ -166,7 +434,7 @@ export function SettingsPage() {
             <input
               type="search"
               id="side-search"
-              placeholder="搜索设置…"
+              placeholder="搜索设置、关键词…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               autoComplete="off"
@@ -184,6 +452,7 @@ export function SettingsPage() {
                     type="button"
                     className={`side-item${panel === n.id ? " active" : ""}`}
                     aria-current={panel === n.id ? "page" : undefined}
+                    title={n.keywords.slice(0, 8).join(" · ")}
                     onClick={() => {
                       setPanel(n.id);
                       window.location.hash = n.id;
@@ -197,7 +466,10 @@ export function SettingsPage() {
           })}
           {filtered.length === 0 && (
             <div className="side-empty" role="status">
-              没有匹配的设置分类
+              没有匹配项
+              <div style={{ marginTop: 6, fontSize: 11, opacity: 0.75 }}>
+                可试：字体、GPU、SSH、API、快捷键、审批…
+              </div>
             </div>
           )}
         </aside>
@@ -448,6 +720,24 @@ export function SettingsPage() {
                       <span className="slider-val">{s.uiOpacity ?? 100}%</span>
                     </div>
                   </Row>
+                  <Row
+                    label="窗口按钮位置"
+                    desc="自动：mac 左侧红绿灯 · 其它右侧 Windows 按钮；也可强制左侧/右侧"
+                  >
+                    <Segmented
+                      value={s.windowControlsSide ?? "auto"}
+                      options={[
+                        { val: "auto", label: "自动" },
+                        { val: "left", label: "左侧 · Mac" },
+                        { val: "right", label: "右侧 · Win" },
+                      ]}
+                      onChange={(v) =>
+                        s.patch({
+                          windowControlsSide: v as "auto" | "left" | "right",
+                        })
+                      }
+                    />
+                  </Row>
                 </div>
               </div>
               <div className="section">
@@ -491,6 +781,22 @@ export function SettingsPage() {
                   </Row>
                   <Row label="光标闪烁">
                     <Switch checked={s.cursorBlink} onChange={(v) => s.patch({ cursorBlink: v })} />
+                  </Row>
+                  <Row
+                    label="终端渲染"
+                    desc="默认 GPU（WebGL），失败自动回退 Canvas · 切换后新开窗格/标签生效 · 状态栏显示 GPU/Canvas"
+                  >
+                    <Segmented
+                      value={s.termRenderer ?? "auto"}
+                      options={[
+                        { val: "auto", label: "自动" },
+                        { val: "webgl", label: "GPU" },
+                        { val: "canvas", label: "Canvas" },
+                      ]}
+                      onChange={(v) =>
+                        s.patch({ termRenderer: v as "auto" | "webgl" | "canvas" })
+                      }
+                    />
                   </Row>
                 </div>
               </div>

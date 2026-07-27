@@ -21,3 +21,21 @@ export function isMacOS(): boolean {
 export function isWindows(): boolean {
   return hostPlatform() === "windows";
 }
+
+/** Window control side preference (persisted). */
+export type WindowControlsSidePref = "auto" | "left" | "right";
+
+/** Resolved side used for layout/chrome. */
+export type WindowControlsSide = "left" | "right";
+
+/**
+ * Resolve caption-button side:
+ * - auto → macOS left (traffic lights), others right (Windows chrome)
+ * - left / right → force that side (and matching button style)
+ */
+export function resolveWindowControlsSide(
+  pref: WindowControlsSidePref | undefined | null,
+): WindowControlsSide {
+  if (pref === "left" || pref === "right") return pref;
+  return isMacOS() ? "left" : "right";
+}

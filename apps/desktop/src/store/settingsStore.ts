@@ -36,6 +36,19 @@ export type SettingsState = {
   fontSize: number;
   cursorStyle: "bar" | "block" | "underline";
   cursorBlink: boolean;
+  /**
+   * Terminal glyph renderer:
+   * - auto (default): try WebGL, fall back to Canvas
+   * - webgl: force WebGL (still falls back if context fails)
+   * - canvas: force Canvas 2D
+   */
+  termRenderer: "auto" | "webgl" | "canvas";
+  /**
+   * Window min/max/close chrome side:
+   * - auto (default): macOS → left traffic lights; Windows/Linux → right buttons
+   * - left / right: force that side (and matching visual style)
+   */
+  windowControlsSide: "auto" | "left" | "right";
   welcomeDismissed: boolean;
 
   aiEnabled: boolean;
@@ -111,6 +124,8 @@ const defaults = (): Omit<
   fontSize: 13,
   cursorStyle: "bar",
   cursorBlink: true,
+  termRenderer: "auto",
+  windowControlsSide: "auto",
   welcomeDismissed: false,
   aiEnabled: true,
   aiProvider: "openai-compat",

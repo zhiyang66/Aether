@@ -255,9 +255,46 @@
     .app:not(.windowed) .win-btn .max-icon.normal { display: none; }
     .app:not(.windowed) .win-btn .max-icon.restore { display: block; }
 
-    /* macOS traffic lights (left) — custom decorations=false chrome */
+    /* Left chrome: true window-centered title via equal side columns */
     .titlebar.is-mac {
       padding-left: 0;
+      padding-right: 10px;
+      gap: 0;
+      position: relative;
+    }
+    .titlebar-mac-side {
+      flex: 1 1 0;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      height: 100%;
+    }
+    .titlebar-mac-side-left {
+      justify-content: flex-start;
+    }
+    .titlebar-mac-side-right {
+      justify-content: flex-end;
+    }
+    .titlebar-mac-center {
+      flex: 0 1 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-width: 0;
+      max-width: min(420px, 46vw);
+      padding: 0 8px;
+      pointer-events: none; /* clicks pass through; drag still works via data-tauri-drag-region */
+    }
+    .titlebar-mac-center .app-icon,
+    .titlebar-mac-center .app-title {
+      pointer-events: auto;
+    }
+    .titlebar-drag-fill {
+      flex: 1 1 auto;
+      min-width: 8px;
+      height: 100%;
+      align-self: stretch;
     }
     .win-controls.mac-traffic {
       display: flex;
@@ -265,7 +302,7 @@
       gap: 8px;
       height: 100%;
       margin: 0;
-      padding: 0 12px 0 14px;
+      padding: 0 10px 0 14px;
       flex-shrink: 0;
     }
     .traffic-btn {
@@ -1771,6 +1808,22 @@
       display: flex;
       align-items: center;
       gap: 5px;
+      max-width: 280px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .status-cwd {
+      max-width: min(360px, 36vw);
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+    }
+    .status-ref {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--fg);
+      letter-spacing: 0.02em;
     }
     .status-dot {
       width: 6px;
