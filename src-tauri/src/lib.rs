@@ -7,10 +7,12 @@ mod shell_integration;
 mod shell_scan;
 
 use pty_host::{PtyHost, SharedPty};
+use base64::Engine;
+use futures_util::StreamExt;
 use serde::Deserialize;
 use std::io::Write;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{Emitter, Manager, State};
 
 #[derive(Deserialize)]
 struct PtyCreateArgs {
@@ -332,19 +334,37 @@ async fn update_download_and_install(
   if response.content_length().is_some_and(|size| size > MAX_INSTALLER_SIZE) {
     return Err("安装包过大（超过 512 MB）".into());
   }
-  let bytes = response
-    .bytes()
-    .await
-    .map_err(|e| format!("读取安装包失败: {e}"))?;
-  if bytes.len() as u64 > MAX_INSTALLER_SIZE {
-    return Err("安装包过大（超过 512 MB）".into());
-  }
   let path = std::env::temp_dir().join(format!("aether-update-{}-{name}", uuid::Uuid::new_v4()));
-  let mut file = std::fs::File::create(&path).map_err(|e| format!("创建临时安装包失败: {e}"))?;
-  file
-    .write_all(&bytes)
-    .map_err(|e| format!("写入安装包失败: {e}"))?;
-  file.flush().map_err(|e| format!("保存安装包失败: {e}"))?;
+  let part_path = path.with_extension(format!("{}.part", path.extension().and_then(|v| v.to_str()).unwrap_or("download")));
+  let total = response.content_length();
+  let _ = app.emit("update://download-progress", serde_json::json!({
+    "downloaded": 0_u64,
+    "total": total,
+    "percent": 0_u8,
+  }));
+  let mut stream = response.bytes_stream();
+  let mut downloaded = 0_u64;
+  {
+    let mut file = std::fs::File::create(&part_path)
+      .map_err(|e| format!("创建临时安装包失败: {e}"))?;
+    while let Some(chunk) = stream.next().await {
+      let chunk = chunk.map_err(|e| format!("读取安装包失败: {e}"))?;
+      downloaded = downloaded.saturating_add(chunk.len() as u64);
+      if downloaded > MAX_INSTALLER_SIZE {
+        return Err("安装包过大（超过 512 MB）".into());
+      }
+      file.write_all(&chunk).map_err(|e| format!("写入安装包失败: {e}"))?;
+      let percent = total.map(|size| ((downloaded.saturating_mul(100) / size.max(1)).min(100)) as u8);
+      let _ = app.emit("update://download-progress", serde_json::json!({
+        "downloaded": downloaded,
+        "total": total,
+        "percent": percent,
+      }));
+    }
+    file.flush().map_err(|e| format!("保存安装包失败: {e}"))?;
+    file.sync_all().map_err(|e| format!("保存安装包失败: {e}"))?;
+  }
+  std::fs::rename(&part_path, &path).map_err(|e| format!("完成安装包下载失败: {e}"))?;
 
   let extension = path.extension().and_then(|v| v.to_str()).unwrap_or_default();
   let mut command = if extension.eq_ignore_ascii_case("msi") {
@@ -354,11 +374,54 @@ async fn update_download_and_install(
   } else {
     std::process::Command::new(&path)
   };
-  command
-    .spawn()
-    .map_err(|e| format!("无法启动安装程序: {e}"))?;
+  let mut launch_error = None;
+  for attempt in 0..5 {
+    match command.spawn() {
+      Ok(_) => {
+        launch_error = None;
+        break;
+      }
+      Err(e) if e.raw_os_error() == Some(32) && attempt < 4 => {
+        launch_error = Some(e);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+      }
+      Err(e) => return Err(format!("无法启动安装程序: {e}")),
+    }
+  }
+  if let Some(e) = launch_error {
+    return Err(format!("无法启动安装程序: {e}"));
+  }
   app.exit(0);
   Ok(())
+}
+
+#[tauri::command]
+fn save_pasted_image(
+  app: tauri::AppHandle,
+  mime_type: String,
+  data_base64: String,
+) -> Result<String, String> {
+  let extension = match mime_type.to_ascii_lowercase().as_str() {
+    "image/png" => "png",
+    "image/jpeg" => "jpg",
+    "image/webp" => "webp",
+    "image/gif" => "gif",
+    _ => return Err("仅支持 PNG、JPEG、WebP 或 GIF 图片".into()),
+  };
+  if data_base64.len() > 12 * 1024 * 1024 {
+    return Err("图片须小于 8 MB".into());
+  }
+  let bytes = base64::engine::general_purpose::STANDARD
+    .decode(data_base64)
+    .map_err(|_| "图片数据无效")?;
+  if bytes.is_empty() || bytes.len() > 8 * 1024 * 1024 {
+    return Err("图片须小于 8 MB".into());
+  }
+  let dir = app.path().app_data_dir().map_err(|e| format!("无法定位附件目录: {e}"))?.join("attachments");
+  std::fs::create_dir_all(&dir).map_err(|e| format!("无法创建附件目录: {e}"))?;
+  let path = dir.join(format!("paste-{}.{}", uuid::Uuid::new_v4(), extension));
+  std::fs::write(&path, bytes).map_err(|e| format!("保存图片失败: {e}"))?;
+  Ok(path.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -426,6 +489,7 @@ pub fn run() {
       agent_chat_stream_tools,
       update_feed_fetch,
       update_download_and_install,
+      save_pasted_image,
       mcp_host::mcp_connect,
       mcp_host::mcp_disconnect,
       mcp_host::mcp_status,

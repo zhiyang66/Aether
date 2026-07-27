@@ -26,6 +26,11 @@ const PWSH_SCRIPT: &str = r#"# Aether shell integration (OSC 133 / OSC 7) — pr
 if ($env:AETHER_SI -eq '1') { return }
 $env:AETHER_SI = '1'
 try {
+  # Keep Ctrl+Enter in the editing buffer instead of accepting the command.
+  # This only adds a PSReadLine key binding; it does not replace ReadLine.
+  Set-PSReadLineKeyHandler -Chord Ctrl+Enter -Function AddLine
+} catch {}
+try {
   $Global:__AetherOrigPrompt = $function:prompt
 } catch {
   $Global:__AetherOrigPrompt = $null

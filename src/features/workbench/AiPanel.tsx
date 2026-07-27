@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useWorkbenchStore } from "../../store/workbenchStore";
 import { useSettingsStore } from "../../store/settingsStore";
@@ -23,6 +23,11 @@ import {
   type AgentSlashCommand,
 } from "../../lib/agentSlash";
 import { AppDialogHost, askConfirm } from "../../components/AppDialog";
+import {
+  clipboardHasImage,
+  readClipboardImageFromData,
+  type ClipboardImage,
+} from "../../lib/imagePaste";
 
 /**
  * Effort maps to real API params since 0.7: reasoning_effort (OpenAI 兼容) /
@@ -36,6 +41,14 @@ const EFFORTS = [
 ];
 
 type ToolTraceStep = import("../../store/workbenchStore").AiToolTraceStep;
+
+type QueuedAppend = {
+  id: string;
+  text: string;
+  sessionId: string | null;
+};
+
+type ImageAttachment = ClipboardImage & { id: string };
 
 const TOOL_LABELS: Record<string, string> = {
   list_panes: "查看终端布局",
@@ -100,10 +113,23 @@ function describeToolStep(step: ToolTraceStep): string {
 }
 
 function ToolTrace({ steps, live = false }: { steps: ToolTraceStep[]; live?: boolean }) {
+  const [open, setOpen] = useState(live);
+
   return (
     <div className={`msg-tool-trace${live ? " live" : ""}`} aria-label={live ? "正在执行的操作" : "操作记录"}>
-      <div className="msg-tool-trace-title">{live ? "正在操作" : "操作记录"} · {steps.length}</div>
-      <ol className="msg-tool-trace-list">
+      <button
+        type="button"
+        className={`msg-tool-trace-title msg-tool-trace-toggle${live ? " static" : ""}`}
+        aria-expanded={open}
+        onClick={() => {
+          if (!live) setOpen((current) => !current);
+        }}
+      >
+        <span className="msg-thinking-chevron" aria-hidden>{open ? "▾" : "▸"}</span>
+        {live ? "正在操作" : "操作记录"} · {steps.length}
+        {!live && <span className="msg-thinking-hint">{open ? "收起" : "展开"}</span>}
+      </button>
+      {open && <ol className="msg-tool-trace-list">
         {steps.map((step, i) => (
           <li key={`${live ? "live" : "saved"}-${i}-${step.name}`} className={`msg-tool-step${step.ok ? " ok" : " fail"}`}>
             <span className="msg-tool-index">{i + 1}</span>
@@ -118,7 +144,7 @@ function ToolTrace({ steps, live = false }: { steps: ToolTraceStep[]; live?: boo
             )}
           </li>
         ))}
-      </ol>
+      </ol>}
     </div>
   );
 }
@@ -169,7 +195,11 @@ export function AiPanel() {
   const [slashIdx, setSlashIdx] = useState(0);
   /** Expand thinking blocks by message id */
   const [thinkingOpen, setThinkingOpen] = useState<Record<string, boolean>>({});
+  const [queuedAppends, setQueuedAppends] = useState<QueuedAppend[]>([]);
+  const [editingAppendId, setEditingAppendId] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
   const messagesRef = useRef<HTMLDivElement>(null);
+  const scrollFrameRef = useRef<number | null>(null);
   const resizeRef = useRef<HTMLDivElement>(null);
   const mockTimerRef = useRef<number | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
@@ -180,6 +210,7 @@ export function AiPanel() {
   const streamSettledRef = useRef(false);
   /** Session id at send time — replies must not follow UI session switch */
   const streamSessionRef = useRef<string | null>(null);
+  const composingRef = useRef(false);
 
   const effortMeta = EFFORTS.find((e) => e.id === aiEffort) ?? EFFORTS[1];
   const modelLabel =
@@ -209,11 +240,32 @@ export function AiPanel() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [historyOpen]);
 
-  useEffect(() => {
-    if (messagesRef.current) {
-      messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+  // Streamed Markdown can grow after React commits. Schedule the scroll for
+  // the next frame so every Agent update reliably keeps the newest output visible.
+  useLayoutEffect(() => {
+    if (scrollFrameRef.current != null) {
+      window.cancelAnimationFrame(scrollFrameRef.current);
     }
-  }, [session?.messages.length, agentBusy, streamPreview, streamHtml]);
+    scrollFrameRef.current = window.requestAnimationFrame(() => {
+      const el = messagesRef.current;
+      if (el && !composingRef.current) el.scrollTop = el.scrollHeight;
+      scrollFrameRef.current = null;
+    });
+    return () => {
+      if (scrollFrameRef.current != null) {
+        window.cancelAnimationFrame(scrollFrameRef.current);
+        scrollFrameRef.current = null;
+      }
+    };
+  }, [
+    session?.id,
+    session?.messages.length,
+    agentBusy,
+    streamPreview,
+    streamHtml,
+    thinkingPreview,
+    liveToolTrace.length,
+  ]);
 
   // Live markdown: re-render on a short throttle so incomplete fences / bold
   // update smoothly without running the converter on every token.
@@ -426,6 +478,21 @@ export function AiPanel() {
     return null;
   }, [session?.messages]);
 
+  const queueAppend = (rawText: string) => {
+    const text = rawText.trim();
+    if (!text) return false;
+    setQueuedAppends((current) => [
+      ...current,
+      {
+        id: nextId("append"),
+        text,
+        sessionId: useWorkbenchStore.getState().activeAgentSessionId,
+      },
+    ]);
+    setEditingAppendId(null);
+    return true;
+  };
+
   const runAction = (a: AgentAction, messageId?: string) => {
     const st = useWorkbenchStore.getState();
     if (a.type === "reply") {
@@ -434,10 +501,10 @@ export function AiPanel() {
         toastMsg("动作缺少回复内容");
         return;
       }
-      // Busy: sendWithText would silently drop the message — keep the chip
-      // alive and tell the user instead of consuming it for nothing.
+      // Reply chips can join the follow-up queue while another turn is active.
       if (useWorkbenchStore.getState().agentBusy) {
-        toastMsg("生成中 · 请先停止或等待完成再点击");
+        if (messageId) markActionsConsumed(messageId);
+        void appendImmediately(text);
         return;
       }
       if (messageId) markActionsConsumed(messageId);
@@ -474,16 +541,6 @@ export function AiPanel() {
     }
     const run = a.type === "run" || a.type === "insert_and_run";
     if (a.targetSerial != null) {
-      const leaf = st.resolveSerial(a.targetSerial);
-      if (leaf) {
-        for (const t of st.tabs) {
-          if (findLeaf(t.layout, leaf.id)) {
-            st.setActiveTab(t.id);
-            break;
-          }
-        }
-        st.setActivePane(leaf.id);
-      }
       insertToPane(a.targetSerial, a.command, run);
     } else {
       insertToPane(undefined, a.command, run);
@@ -531,16 +588,27 @@ export function AiPanel() {
     toastMsg("已停止");
   };
 
-  const sendWithText = async (text: string) => {
-    if (!text || agentBusy) return;
+  const appendImmediately = async (text: string) => {
+    if (!queueAppend(text)) return;
+    toastMsg("已追加，正在切换到新任务");
+    await stopGeneration();
+  };
+
+  const sendWithText = async (
+    text: string,
+    queuedSessionId?: string | null,
+    images: ImageAttachment[] = [],
+  ) => {
+    if ((!text && images.length === 0) || agentBusy) return;
     const st0 = useWorkbenchStore.getState();
-    const chatSessionId = st0.activeAgentSessionId;
+    const chatSessionId = queuedSessionId ?? st0.activeAgentSessionId;
     streamSessionRef.current = chatSessionId;
 
     // Prior turns only (before this user message) — avoid duplicating current turn
     const history = buildChatHistory(chatSessionId);
 
-    appendAgentMessage({ role: "user", content: text }, chatSessionId);
+    const displayText = text || "[图片]";
+    appendAgentMessage({ role: "user", content: displayText }, chatSessionId);
     setAgentBusy(true);
     if (streamHtmlTimerRef.current != null) {
       window.clearTimeout(streamHtmlTimerRef.current);
@@ -658,7 +726,16 @@ export function AiPanel() {
       const baseMessages: unknown[] = [
         { role: "system", content: system },
         ...history,
-        { role: "user", content: text },
+        {
+          role: "user",
+          content: [
+            ...(text ? [{ type: "text", text }] : []),
+            ...images.map((image) => ({
+              type: "image_url",
+              image_url: { url: image.dataUrl },
+            })),
+          ],
+        },
       ];
 
       // ── Primary path: streaming tool loop (cancellable mid-flight) ──
@@ -758,7 +835,16 @@ export function AiPanel() {
           messages: [
             { role: "system", content: system },
             ...history,
-            { role: "user", content: text },
+            {
+              role: "user",
+              content: [
+                ...(text ? [{ type: "text", text }] : []),
+                ...images.map((image) => ({
+                  type: "image_url",
+                  image_url: { url: image.dataUrl },
+                })),
+              ],
+            },
           ],
         });
       } catch (e) {
@@ -800,7 +886,7 @@ export function AiPanel() {
     // Local mock agent (browser / no tauri)
     mockTimerRef.current = window.setTimeout(() => {
       if (!settleStream()) return;
-      const reply = localAgentReply(text, bundle, aiEffort);
+      const reply = localAgentReply(displayText, bundle, aiEffort);
       appendAgentMessage(
         {
           role: "assistant",
@@ -859,8 +945,18 @@ export function AiPanel() {
 
   // 0.8: "AI 诊断" from a failed command block → send block context to agent.
   // Ref keeps the latest sendWithText (its closure holds current settings).
-  const sendWithTextRef = useRef<((t: string) => Promise<void>) | null>(null);
+  const sendWithTextRef = useRef<
+    ((text: string, queuedSessionId?: string | null) => Promise<void>) | null
+  >(null);
   sendWithTextRef.current = sendWithText;
+
+  useEffect(() => {
+    if (agentBusy || queuedAppends.length === 0) return;
+    const [next] = queuedAppends;
+    setQueuedAppends((current) => current.slice(1));
+    setEditingAppendId(null);
+    void sendWithTextRef.current?.(next.text, next.sessionId);
+  }, [agentBusy, queuedAppends]);
   useEffect(() => {
     const onDiagnose = (ev: Event) => {
       const detail = (ev as CustomEvent<{ paneId: string; blockId: string }>)
@@ -926,9 +1022,9 @@ export function AiPanel() {
 
   const send = () => {
     const text = input.trim();
-    if (!text) return;
+    if (!text && attachments.length === 0) return;
     // /stop works even while busy — equivalent to the Stop button
-    if (/^\/stop\b/i.test(text)) {
+    if (!attachments.length && /^\/stop\b/i.test(text)) {
       setInput("");
       if (useWorkbenchStore.getState().agentBusy) {
         void stopGeneration();
@@ -937,36 +1033,46 @@ export function AiPanel() {
       }
       return;
     }
-    if (agentBusy) return;
+    if (agentBusy) {
+      if (attachments.length) {
+        toastMsg("生成中暂不能追加图片，请在当前回复结束后发送");
+        return;
+      }
+      setInput("");
+      void appendImmediately(text);
+      return;
+    }
 
     // 1) Completing slash menu with prefix only → accept selection
-    if (
+    if (!attachments.length && (
       slashOpen &&
       slashMatches.length &&
       slashEnterShouldAccept(input, slashMatches)
-    ) {
+    )) {
       applySlash(slashMatches[slashIdx] ?? slashMatches[0]);
       return;
     }
 
     // 2) Local slash that need typed args
-    if (runSlashLocal(text)) {
+    if (!attachments.length && runSlashLocal(text)) {
       setInput("");
       return;
     }
-    if (/^\/focus\s*$/i.test(text)) {
+    if (!attachments.length && /^\/focus\s*$/i.test(text)) {
       toastMsg("请输入窗格号，例如 /focus 2");
       setInput("/focus ");
       return;
     }
     // Unknown slash → don't pretend it's a chat message
-    if (text.startsWith("/")) {
+    if (!attachments.length && text.startsWith("/")) {
       toastMsg("可用 /focus、/stop · 其它请直接对话或用上方按钮");
       return;
     }
 
+    const images = attachments;
     setInput("");
-    void sendWithText(text);
+    setAttachments([]);
+    void sendWithText(text, undefined, images);
   };
 
   return (
@@ -1317,6 +1423,72 @@ export function AiPanel() {
       </div>
 
       <div className="ai-composer">
+        {queuedAppends.length > 0 && (
+          <div className="ai-append-queue" aria-label="待追加对话">
+            {queuedAppends.map((item, index) => {
+              const editing = editingAppendId === item.id;
+              return (
+                <div className="ai-append-item" key={item.id}>
+                  <span className="ai-append-index" aria-hidden>{index + 1}</span>
+                  {editing ? (
+                    <textarea
+                      className="ai-append-editor"
+                      value={item.text}
+                      rows={2}
+                      autoFocus
+                      aria-label="编辑待追加内容"
+                      onChange={(e) => {
+                        const text = e.target.value;
+                        setQueuedAppends((current) =>
+                          current.map((entry) =>
+                            entry.id === item.id ? { ...entry, text } : entry,
+                          ),
+                        );
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          setEditingAppendId(null);
+                        }
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          setEditingAppendId(null);
+                        }
+                      }}
+                    />
+                  ) : (
+                    <span className="ai-append-text" title={item.text}>{item.text}</span>
+                  )}
+                  <button
+                    type="button"
+                    className="ai-append-icon"
+                    title={editing ? "完成编辑" : "编辑追加内容"}
+                    aria-label={editing ? "完成编辑" : "编辑追加内容"}
+                    onClick={() => setEditingAppendId(editing ? null : item.id)}
+                  >
+                    {editing ? (
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="5 12 10 17 19 7" /></svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 16.5V20h3.5L18 9.5 14.5 6 4 16.5Z" /><path d="m13.5 7 3.5 3.5" /></svg>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    className="ai-append-icon"
+                    title="删除追加内容"
+                    aria-label="删除追加内容"
+                    onClick={() => {
+                      setQueuedAppends((current) => current.filter((entry) => entry.id !== item.id));
+                      if (editing) setEditingAppendId(null);
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" /></svg>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
         <div className="ai-input-wrap" style={{ position: "relative" }}>
           {slashOpen && (
             <div className="ai-slash-menu" role="listbox" aria-label="斜杠命令">
@@ -1348,6 +1520,27 @@ export function AiPanel() {
             placeholder="直接说需求… 例：在 WSL 里 cd ~ · 聚焦 /focus 2"
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            onCompositionStart={() => {
+              composingRef.current = true;
+            }}
+            onCompositionEnd={() => {
+              composingRef.current = false;
+            }}
+            onPaste={(e) => {
+              if (!clipboardHasImage(e.clipboardData)) return;
+              e.preventDefault();
+              void readClipboardImageFromData(e.clipboardData)
+                .then((image) => {
+                  if (!image) return;
+                  setAttachments((current) => [
+                    ...current,
+                    { ...image, id: nextId("image") },
+                  ]);
+                })
+                .catch((error) => {
+                  toastMsg(`粘贴图片失败: ${error instanceof Error ? error.message : String(error)}`);
+                });
+            }}
             onKeyDown={(e) => {
               if (slashOpen && slashMatches.length) {
                 if (e.key === "ArrowUp") {
@@ -1374,12 +1567,27 @@ export function AiPanel() {
               }
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                // busy 时放行 /stop（等价停止按钮）；其余输入由 send() 内部拦截
-                if (agentBusy && !/^\/stop\b/i.test(input.trim())) return;
                 send();
               }
             }}
           />
+          {attachments.length > 0 && (
+            <div className="ai-image-attachments" aria-label="待发送图片">
+              {attachments.map((image) => (
+                <div className="ai-image-attachment" key={image.id}>
+                  <img src={image.dataUrl} alt="待发送图片" />
+                  <button
+                    type="button"
+                    title="移除图片"
+                    aria-label="移除图片"
+                    onClick={() => setAttachments((current) => current.filter((item) => item.id !== image.id))}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="ai-composer-bar">
             <div className="ai-composer-right">
               <div className={`ai-model-picker${menuOpen ? " open" : ""}`}>
@@ -1531,18 +1739,34 @@ export function AiPanel() {
                 )}
               </div>
               {agentBusy ? (
-                <button
-                  className="send-btn stop-btn"
-                  id="ai-stop"
-                  type="button"
-                  title="停止生成"
-                  onClick={() => void stopGeneration()}
-                >
-                  停止
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" stroke="none" />
-                  </svg>
-                </button>
+                <>
+                  <button
+                    className="send-btn append-btn"
+                    id="ai-append"
+                    type="button"
+                    title="追加到下一轮"
+                    aria-label="追加到下一轮"
+                    disabled={!input.trim()}
+                    onClick={send}
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <line x1="12" y1="19" x2="12" y2="5" />
+                      <polyline points="6 11 12 5 18 11" />
+                    </svg>
+                  </button>
+                  <button
+                    className="send-btn stop-btn"
+                    id="ai-stop"
+                    type="button"
+                    title="停止生成"
+                    onClick={() => void stopGeneration()}
+                  >
+                    停止
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <rect x="6" y="6" width="12" height="12" rx="1" fill="currentColor" stroke="none" />
+                    </svg>
+                  </button>
+                </>
               ) : (
                 <button
                   className="send-btn"

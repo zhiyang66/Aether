@@ -13,6 +13,7 @@ import { useSettingsStore } from "../store/settingsStore";
 import { collectLeaves, findLeafBySerial, type LeafPane } from "./layout";
 import { getLivePtyId, listLiveTerms } from "../features/terminal/termRegistry";
 import { ptyWrite } from "../ipc/pty";
+import { validateAgentShellCommand } from "./terminalPaste";
 
 export type ToolCall = {
   id: string;
@@ -80,11 +81,16 @@ export const AGENT_TOOLS_OPENAI = [
     function: {
       name: "run_command",
       description:
-        "在指定窗格执行一条 shell 命令（写入并回车）。目标不在当前焦点标签时必须传 pane=\"T1:#1\" 先定位（会自动切换标签）；不要假设 #1 就是 WSL。危险命令在确认模式下可能仅插入不执行。wait_for_exit=true 时等待命令块退出码。",
+        "在指定窗格执行一条不超过 240 字符的单行 shell 命令（写入并回车）。不支持多行、heredoc（<<EOF）、;、|、&、? 等复合语法，必须拆成短命令、逐步读结果。目标不在当前焦点标签时必须传 pane=\"T1:#1\" 先定位，操作不会切走用户当前标签；不要假设 #1 就是 WSL。危险命令在确认模式下可能仅插入不执行。wait_for_exit=true 时等待命令块退出码。",
       parameters: {
         type: "object",
         properties: {
           command: { type: "string", description: "完整命令" },
+          risk: {
+            type: "string",
+            enum: ["read", "write", "destructive"],
+            description: "先判断意图：查询/查看=read；会修改系统、文件、服务或配置=write；删除、覆盖、提权执行未知脚本或不可逆操作=destructive。该标签只会加强本地审批，不会绕过安全规则。",
+          },
           pane: PANE_REF_PROP,
           serial: PANE_SERIAL_PROP,
           wait_ms: {
@@ -392,7 +398,7 @@ export const AGENT_TOOLS_OPENAI = [
     function: {
       name: "hosts_manage",
       description:
-        "管理 SSH 主机：添加/连接（新标签）/删除。私钥按路径引用、只存本机、不外传。",
+        "管理 SSH 主机：添加/连接（新标签）/删除。SSH 连接只尝试一次：新标签创建后必须先 read_pane 检查输出；若远端关闭或失败，停止重连并向用户说明错误与检查项，绝不可对同一主机重复 connect。私钥按路径引用、只存本机、不外传。",
       parameters: {
         type: "object",
         properties: {
@@ -678,7 +684,11 @@ export async function executeAgentTool(
   const isMcp = name.startsWith("mcp__");
   const mcpServer = isMcp ? name.split("__")[1] : undefined;
   const approvalCmd = name === "run_command" ? String(args.command || "") : undefined;
-  const verdict = resolveApproval({ tool: name, command: approvalCmd, mcpServer });
+  const agentRisk =
+    args.risk === "read" || args.risk === "write" || args.risk === "destructive"
+      ? args.risk
+      : undefined;
+  const verdict = resolveApproval({ tool: name, command: approvalCmd, mcpServer, agentRisk });
   /** User explicitly consented via dialog — overrides danger-insert downgrade */
   let approvedViaDialog = false;
   if (verdict.decision === "deny") {
@@ -889,6 +899,8 @@ export async function executeAgentTool(
   if (name === "run_command") {
     const command = String(args.command || "").trim();
     if (!command) return { ok: false, result: "缺少 command" };
+    const commandCheck = validateAgentShellCommand(command);
+    if (!commandCheck.ok) return { ok: false, result: commandCheck.reason };
     const waitForExit = args.wait_for_exit === true || args.wait_for_exit === "true";
     const waitMs = waitForExit
       ? Math.min(300_000, Math.max(3000, Number(args.wait_ms) || 120_000))
@@ -931,9 +943,6 @@ export async function executeAgentTool(
       };
     }
 
-    // Focus the target pane BEFORE any write — switches tab when needed
-    activatePane(st, leaf);
-
     // Shared policy with the store path (resolveDangerAction) — channels must
     // agree. Explicit dialog approval overrides the danger-insert downgrade
     // (the user just saw the full command and said run), but never execMode=insert.
@@ -951,7 +960,7 @@ export async function executeAgentTool(
         useWorkbenchStore.getState().toastMsg("⚠ 危险命令 · 已改为仅插入，请在终端确认后手动回车");
         return {
           ok: false,
-          result: `危险命令已仅插入未执行（确认模式）· 已聚焦 ${paneLabelOf(st, leaf)}，等待用户手动回车: ${command}`,
+          result: `危险命令已仅插入未执行（确认模式）· 已写入 ${paneLabelOf(st, leaf)}，等待用户手动回车: ${command}`,
         };
       }
       return {
@@ -1059,7 +1068,6 @@ export async function executeAgentTool(
     if (!target.leaf) {
       return { ok: false, result: `窗格 ${target.label} 不存在` };
     }
-    activatePane(st, target.leaf);
     st.clearPane(target.leaf.id);
     return { ok: true, result: `已清屏窗格 ${paneLabelOf(st, target.leaf)}` };
   }
@@ -1515,6 +1523,8 @@ export async function executeAgentTool(
         : {});
       const command = renderSnippet(target, values).trim();
       if (!command) return { ok: false, result: "渲染后为空命令" };
+      const commandCheck = validateAgentShellCommand(command);
+      if (!commandCheck.ok) return { ok: false, result: commandCheck.reason };
       const serial =
         args.serial != null && args.serial !== ""
           ? Number(args.serial)
@@ -1523,7 +1533,6 @@ export async function executeAgentTool(
       if (!leaf) return { ok: false, result: `目标窗格不存在 (#${serial ?? "焦点"})` };
       const ptyId = getLivePtyId(leaf.id) || leaf.ptyId || null;
       if (!ptyId) return { ok: false, result: `窗格 #${leaf.serial} 无 live PTY，请先点一下该窗格` };
-      st.setActivePane(leaf.id);
       const decision = resolveDangerAction(command, settings, true);
       if (!decision.run) {
         await ptyWrite(ptyId, command);
@@ -1715,6 +1724,8 @@ export async function runAgentToolLoop(opts: {
   const trace: ToolTraceStep[] = [];
   /** Same tool+args failing twice → short-circuit to stop bubble loops */
   const failStreak = new Map<string, number>();
+  /** A spawned SSH process can fail asynchronously; never turn that into reconnect spam. */
+  const sshConnectAttempts = new Set<string>();
   const joined = () => texts.join("\n\n").trim();
 
   // MCP tools join the table for every round (broken servers skipped silently)
@@ -1775,7 +1786,29 @@ export async function runAgentToolLoop(opts: {
       const streakKey = `${tc.name}|${(tc.arguments || "").slice(0, 240)}`;
       opts.cb?.onStatus?.(`调用 ${tc.name}…`);
       opts.cb?.onToolStart?.(tc.name, argsPreview);
-      const exec = await executeAgentTool(tc.name, tc.arguments);
+      let exec: Awaited<ReturnType<typeof executeAgentTool>>;
+      if (tc.name === "hosts_manage") {
+        let connectName = "";
+        try {
+          const args = JSON.parse(tc.arguments || "{}") as { action?: unknown; name?: unknown };
+          if (args.action === "connect") connectName = String(args.name || "").trim();
+        } catch {
+          /* executeAgentTool returns the parse error below */
+        }
+        if (connectName && sshConnectAttempts.has(connectName)) {
+          exec = {
+            ok: false,
+            result:
+              `已阻止重复连接 SSH 主机「${connectName}」。连接失败或远端关闭时不得重试；` +
+              "请读取已创建标签的输出，说明错误并建议检查 sshd、账号权限、安全组或本机日志。",
+          };
+        } else {
+          if (connectName) sshConnectAttempts.add(connectName);
+          exec = await executeAgentTool(tc.name, tc.arguments);
+        }
+      } else {
+        exec = await executeAgentTool(tc.name, tc.arguments);
+      }
       const step: ToolTraceStep = {
         name: tc.name,
         argsPreview,

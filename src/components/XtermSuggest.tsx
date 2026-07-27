@@ -46,15 +46,15 @@ export function XtermSuggest({
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (!items.length) return;
-      if (e.key === "ArrowDown") {
+      if (!e.ctrlKey && !e.metaKey && e.altKey && e.key === "ArrowDown") {
         e.preventDefault();
         e.stopPropagation();
         setIdx((i) => Math.min(items.length - 1, i + 1));
-      } else if (e.key === "ArrowUp") {
+      } else if (!e.ctrlKey && !e.metaKey && e.altKey && e.key === "ArrowUp") {
         e.preventDefault();
         e.stopPropagation();
         setIdx((i) => Math.max(0, i - 1));
-      } else if (e.key === "Tab") {
+      } else if (e.ctrlKey && !e.metaKey && !e.altKey && e.code === "Space") {
         e.preventDefault();
         e.stopPropagation();
         onPick(items[idx].cmd, false);

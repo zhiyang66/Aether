@@ -66,6 +66,32 @@ export function isDangerousCommand(cmd: string): boolean {
   return PATTERNS.some((re) => re.test(c));
 }
 
+/** Read-only shell commands that may run without an approval prompt in balanced mode. */
+export function isReadOnlyShellCommand(cmd: string): boolean {
+  const words = cmd.trim().split(/\s+/).filter(Boolean);
+  while (words[0] === "sudo") {
+    words.shift();
+    while (words[0]?.startsWith("-")) words.shift();
+  }
+  const [program, subcommand, third] = words.map((word) => word.toLowerCase());
+  if (!program) return false;
+  if (["ls", "pwd", "whoami", "hostname", "id", "date", "uptime", "df", "free", "ps", "ss", "netstat", "cat", "head", "tail", "stat", "which", "where", "type"].includes(program)) {
+    return true;
+  }
+  if (program === "docker") {
+    return ["ps", "images", "inspect", "logs", "version", "info", "stats"].includes(subcommand || "")
+      || ((subcommand === "container" || subcommand === "image") && ["ls", "inspect"].includes(third || ""))
+      || (subcommand === "compose" && ["ps", "logs", "config"].includes(third || ""));
+  }
+  if (program === "git") {
+    return ["status", "diff", "log", "show", "branch", "rev-parse", "remote"].includes(subcommand || "");
+  }
+  if (program === "systemctl") {
+    return ["status", "is-active", "is-enabled", "list-units", "list-unit-files"].includes(subcommand || "");
+  }
+  return program === "journalctl";
+}
+
 export type DangerNote = "" | "insert-only" | "danger-insert" | "danger-auto-run";
 
 export type DangerDecision = {

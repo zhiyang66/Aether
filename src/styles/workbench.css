@@ -1320,7 +1320,7 @@
       border-radius: 10px;
       border: 1px solid var(--border-subtle);
       background: color-mix(in oklch, var(--fg) 4%, transparent);
-      padding: 8px 10px;
+      overflow: hidden;
       margin-bottom: 2px;
     }
     .msg-tool-trace.live {
@@ -1332,12 +1332,30 @@
       font-weight: 600;
       letter-spacing: 0.04em;
       color: var(--muted);
-      margin-bottom: 6px;
+      padding: 7px 10px;
+    }
+    .msg-tool-trace-toggle {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+    }
+    .msg-tool-trace-toggle:hover { color: var(--fg); background: color-mix(in oklch, var(--surface-2) 40%, transparent); }
+    .msg-tool-trace-toggle.static { cursor: default; }
+    .msg-tool-trace-toggle.static:hover { color: var(--muted); background: transparent; }
+    .msg-tool-trace-toggle .msg-thinking-hint { margin-left: auto; }
+    .msg-tool-trace-toggle .msg-thinking-chevron { flex: 0 0 12px; }
+    .msg-tool-trace.live .msg-tool-trace-toggle {
+      color: var(--muted);
     }
     .msg-tool-trace-list {
       list-style: none;
       margin: 0;
-      padding: 0;
+      padding: 0 10px 10px;
       display: flex;
       flex-direction: column;
       gap: 5px;
@@ -1457,6 +1475,69 @@
       flex-shrink: 0;
       background: transparent;
     }
+    .ai-append-queue {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      max-height: 148px;
+      overflow: auto;
+      margin: 0 0 8px;
+      padding: 6px;
+      border: 1px solid color-mix(in oklch, var(--accent) 28%, var(--border));
+      border-radius: 8px;
+      background: color-mix(in oklch, var(--accent) 8%, var(--surface));
+    }
+    .ai-append-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 28px;
+      padding: 4px 5px;
+      border-radius: 6px;
+      background: color-mix(in oklch, var(--bg) 72%, transparent);
+    }
+    .ai-append-index {
+      flex: 0 0 16px;
+      color: var(--muted);
+      font-size: 11px;
+      text-align: center;
+    }
+    .ai-append-text {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+      color: var(--fg);
+    }
+    .ai-append-editor {
+      flex: 1;
+      min-width: 0;
+      resize: vertical;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      color: var(--fg);
+      font: inherit;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .ai-append-icon {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 24px;
+      padding: 0;
+      border: 0;
+      border-radius: 5px;
+      color: var(--muted);
+      background: transparent;
+      cursor: pointer;
+    }
+    .ai-append-icon:hover { color: var(--fg); background: color-mix(in oklch, var(--fg) 9%, transparent); }
+    .ai-append-icon svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
     .ai-input-wrap {
       display: flex;
       flex-direction: column;
@@ -1485,6 +1566,42 @@
       max-height: 120px;
     }
     .ai-input::placeholder { color: var(--muted); }
+    .ai-image-attachments {
+      display: flex;
+      gap: 8px;
+      padding: 8px 10px 0;
+      overflow-x: auto;
+    }
+    .ai-image-attachment {
+      position: relative;
+      flex: 0 0 auto;
+      width: 56px;
+      height: 56px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      background: var(--bg2);
+    }
+    .ai-image-attachment img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .ai-image-attachment button {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      width: 18px;
+      height: 18px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      color: #fff;
+      background: rgba(0, 0, 0, 0.72);
+      cursor: pointer;
+      line-height: 16px;
+    }
     .ai-composer-bar {
       display: flex;
       align-items: center;
@@ -1692,6 +1809,11 @@
     .send-btn.stop-btn {
       background: oklch(0.45 0.14 25);
       color: oklch(0.98 0.01 25);
+    }
+    .send-btn.append-btn {
+      width: 30px;
+      padding: 0;
+      justify-content: center;
     }
     .send-btn.stop-btn:hover {
       background: oklch(0.52 0.16 25);

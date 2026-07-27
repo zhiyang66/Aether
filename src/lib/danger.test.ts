@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isDangerousCommand, resolveDangerAction } from "./danger";
+import { isDangerousCommand, isReadOnlyShellCommand, resolveDangerAction } from "./danger";
 
 describe("isDangerousCommand", () => {
   it("flags rm -rf", () => {
@@ -45,6 +45,14 @@ describe("isDangerousCommand", () => {
     expect(isDangerousCommand("git push --force-with-lease origin main")).toBe(false);
     expect(isDangerousCommand("sudo apt update")).toBe(false);
     expect(isDangerousCommand("ssh user@host")).toBe(false);
+  });
+
+  it("recognizes read-only Docker and sudo inspection commands", () => {
+    expect(isReadOnlyShellCommand("docker ps")).toBe(true);
+    expect(isReadOnlyShellCommand("sudo docker ps")).toBe(true);
+    expect(isReadOnlyShellCommand("sudo systemctl status ssh")).toBe(true);
+    expect(isReadOnlyShellCommand("docker rm old-container")).toBe(false);
+    expect(isReadOnlyShellCommand("sudo apt install curl")).toBe(false);
   });
 });
 

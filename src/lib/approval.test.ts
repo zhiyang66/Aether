@@ -27,12 +27,15 @@ describe("preset defaults", () => {
     expect(resolveApproval({ tool: "run_command", command: "ls" }, s).decision).toBe("ask");
   });
 
-  it("balanced allows read-only and workbench-local, asks for run_command", () => {
+  it("balanced allows read-only and workbench-local, asks for mutating run_command", () => {
     const s = store({ preset: "balanced" });
     expect(resolveApproval({ tool: "read_pane" }, s).decision).toBe("allow");
     expect(resolveApproval({ tool: "split_pane" }, s).decision).toBe("allow");
     expect(resolveApproval({ tool: "app_settings" }, s).decision).toBe("allow");
-    expect(resolveApproval({ tool: "run_command", command: "ls" }, s).decision).toBe("ask");
+    expect(resolveApproval({ tool: "run_command", command: "ls" }, s).decision).toBe("allow");
+    expect(resolveApproval({ tool: "run_command", command: "docker ps" }, s).decision).toBe("allow");
+    expect(resolveApproval({ tool: "run_command", command: "sudo docker ps" }, s).decision).toBe("allow");
+    expect(resolveApproval({ tool: "run_command", command: "docker rm old" }, s).decision).toBe("ask");
     expect(
       resolveApproval({ tool: "mcp__fs__read", mcpServer: "fs" }, s).decision,
     ).toBe("ask");
@@ -44,6 +47,16 @@ describe("preset defaults", () => {
     const v = resolveApproval({ tool: "run_command", command: "rm -rf /" }, s);
     expect(v.decision).toBe("ask");
     expect(v.dangerous).toBe(true);
+  });
+
+  it("model risk can escalate but cannot weaken local checks", () => {
+    const s = store({ preset: "free" });
+    expect(
+      resolveApproval({ tool: "run_command", command: "docker ps", agentRisk: "destructive" }, s).decision,
+    ).toBe("ask");
+    expect(
+      resolveApproval({ tool: "run_command", command: "rm -rf /", agentRisk: "read" }, s).decision,
+    ).toBe("ask");
   });
 });
 
