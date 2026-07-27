@@ -15,7 +15,7 @@ import { ApprovalPanel } from "./ApprovalPanel";
 import { McpPanel } from "./McpPanel";
 import { HostsPanel } from "./HostsPanel";
 import { SkillsPanel } from "./SkillsPanel";
-import { checkForUpdate } from "../../lib/updateCheck";
+import { checkForUpdate, downloadAndInstallUpdate } from "../../lib/updateCheck";
 import { askConfirm } from "../../components/AppDialog";
 import logoUrl from "../../assets/logo.png";
 import "../../styles/settings.css";
@@ -307,6 +307,7 @@ export function SettingsPage() {
   const [panel, setPanel] = useState<PanelId>("general");
   const [search, setSearch] = useState("");
   const [modelsLoading, setModelsLoading] = useState(false);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
 
   useEffect(() => {
     s.load();
@@ -1248,7 +1249,7 @@ export function SettingsPage() {
                     <div className="row-text">
                       <div className="row-label">检查更新</div>
                       <div className="row-desc">
-                        自动对接 GitHub Releases（zhiyang66/Aether）· 仅提示，不自动安装
+                        自动对接 GitHub Releases（zhiyang66/Aether）· 下载后启动安装程序
                       </div>
                     </div>
                     <div className="row-control">
@@ -1263,16 +1264,31 @@ export function SettingsPage() {
                           if (r.status === "disabled") toastMsg("更新检查不可用");
                           else if (r.status === "up-to-date") toastMsg(`已是最新 · ${r.current}`);
                           else if (r.status === "available") {
+                            if (!r.remote.downloadUrl) {
+                              toastMsg(`新版本 ${r.remote.version} 尚未提供应用内安装包`);
+                              return;
+                            }
                             const go = await askConfirm(`发现新版本 ${r.remote.version}`, {
-                              message: `${r.remote.notes || ""}\n\n打开下载页？`.trim(),
-                              okLabel: "打开下载页",
+                              message: `${r.remote.notes || ""}\n\n将下载更新并启动安装程序，应用会退出。`.trim(),
+                              okLabel: "下载并安装",
                             });
-                            if (go && r.remote.url) window.open(r.remote.url, "_blank");
-                            else toastMsg(`可用版本 ${r.remote.version}`);
+                            if (!go) return;
+                            setUpdateInstalling(true);
+                            try {
+                              await downloadAndInstallUpdate(
+                                r.remote.downloadUrl,
+                                r.remote.downloadName,
+                              );
+                            } catch (e) {
+                              const message = e instanceof Error ? e.message : String(e);
+                              toastMsg(`下载安装失败：${message}`);
+                              setUpdateInstalling(false);
+                            }
                           } else toastMsg(`检查失败：${r.message}`);
                         }}
+                        disabled={updateInstalling}
                       >
-                        检查更新
+                        {updateInstalling ? "正在下载…" : "检查更新"}
                       </button>
                     </div>
                   </div>

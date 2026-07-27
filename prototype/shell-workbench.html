@@ -1,0 +1,2554 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Shell Workbench — 跨平台终端工作台</title>
+  <style>
+    :root {
+      --bg: oklch(0.16 0.012 250);
+      --surface: oklch(0.20 0.012 250);
+      --surface-2: oklch(0.24 0.012 250);
+      --fg: oklch(0.93 0.01 250);
+      --muted: oklch(0.65 0.02 250);
+      --border: oklch(0.32 0.015 250);
+      --accent: oklch(0.72 0.14 195);
+      --accent-dim: oklch(0.45 0.08 195);
+      --success: oklch(0.72 0.15 145);
+      --warn: oklch(0.78 0.14 85);
+      --danger: oklch(0.65 0.18 25);
+      --term-bg: oklch(0.13 0.01 250);
+      --term-fg: oklch(0.88 0.02 145);
+      --term-prompt: oklch(0.78 0.14 195);
+      --term-cmd: oklch(0.92 0.01 250);
+      --term-err: oklch(0.70 0.18 25);
+      --tab-active: oklch(0.22 0.014 250);
+      --font-display: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+      --font-body: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+      --font-mono: "Cascadia Code", "JetBrains Mono", "Consolas", "SF Mono", ui-monospace, monospace;
+      --radius: 6px;
+      --titlebar-h: 32px;
+      --tabbar-h: 38px;
+      --statusbar-h: 24px;
+      --shadow-panel: 0 12px 40px oklch(0 0 0 / 0.5);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; overflow: hidden; }
+    body {
+      font-family: var(--font-body);
+      color: var(--fg);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    button:focus:not(:focus-visible),
+    a:focus:not(:focus-visible) {
+      outline: none;
+    }
+
+    /* App window — 纯工具界面，无铺满或窗口化 */
+    .app {
+      width: 100%;
+      height: 100%;
+      background: var(--bg);
+      border: none;
+      border-radius: 0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition:
+        width 0.22s cubic-bezier(0.2, 0.8, 0.2, 1),
+        height 0.22s cubic-bezier(0.2, 0.8, 0.2, 1),
+        margin 0.22s cubic-bezier(0.2, 0.8, 0.2, 1),
+        border-radius 0.18s,
+        opacity 0.18s,
+        transform 0.18s,
+        box-shadow 0.22s;
+    }
+    .app.windowed {
+      width: min(1240px, calc(100vw - 32px));
+      height: min(780px, calc(100vh - 32px));
+      margin: 16px auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: var(--shadow-panel), 0 0 0 1px oklch(1 0 0 / 0.03);
+    }
+    .app.minimized {
+      opacity: 0;
+      pointer-events: none;
+      transform: scale(0.96) translateY(12px);
+    }
+    .app.closed {
+      opacity: 0;
+      pointer-events: none;
+      transform: scale(0.96);
+    }
+
+    /* 最小化 / 关闭后的恢复条（替代任务栏） */
+    .restore-chip {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%) translateY(12px);
+      z-index: 90;
+      height: 40px;
+      padding: 0 18px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--surface-2);
+      color: var(--fg);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 550;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      gap: 10px;
+      box-shadow: var(--shadow-panel);
+      opacity: 0;
+      transition: opacity 0.2s, transform 0.2s;
+    }
+    .restore-chip.show {
+      display: flex;
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    .restore-chip .rc-glyph {
+      width: 22px;
+      height: 22px;
+      border-radius: 5px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      display: grid;
+      place-items: center;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      font-weight: 700;
+      color: var(--fg);
+    }
+
+    /* Title bar — Windows style */
+    .titlebar {
+      height: var(--titlebar-h);
+      background: oklch(0.14 0.01 250);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 0 0 12px;
+      flex-shrink: 0;
+      user-select: none;
+    }
+    .titlebar-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      flex: 1;
+    }
+    .app-icon {
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      display: grid;
+      place-items: center;
+      font-family: var(--font-mono);
+      font-size: 8px;
+      font-weight: 700;
+      color: var(--fg);
+      flex-shrink: 0;
+    }
+    .app-title {
+      font-size: 12px;
+      font-weight: 510;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .app-title strong {
+      color: var(--fg);
+      font-weight: 590;
+    }
+    .titlebar-center {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .icon-btn {
+      width: 32px;
+      height: 32px;
+      min-width: 32px;
+      min-height: 32px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      border-radius: 5px;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      transition: background 0.12s, color 0.12s;
+    }
+    .icon-btn:hover { background: var(--surface-2); color: var(--fg); }
+    .icon-btn:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+    .icon-btn.active {
+      background: var(--surface-2);
+      color: var(--fg);
+      box-shadow: inset 0 0 0 1px var(--border);
+    }
+    .icon-btn svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .icon-btn .agent-icon {
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .ai-header-title .agent-icon {
+      width: 15px;
+      height: 15px;
+      stroke: var(--accent);
+      fill: none;
+      stroke-width: 1.6;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      flex-shrink: 0;
+    }
+
+    /* Windows caption buttons */
+    .win-controls {
+      display: flex;
+      align-items: stretch;
+      height: 100%;
+      margin-left: 8px;
+      flex-shrink: 0;
+    }
+    .win-btn {
+      width: 46px;
+      height: 100%;
+      border: none;
+      background: transparent;
+      color: var(--fg);
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      transition: background 0.1s;
+      padding: 0;
+    }
+    .win-btn:hover { background: oklch(1 0 0 / 0.08); }
+    .win-btn:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+      z-index: 1;
+    }
+    .win-btn.close:hover { background: oklch(0.55 0.22 25); color: white; }
+    .win-btn.close:focus-visible {
+      outline-color: oklch(0.70 0.18 25);
+    }
+    .win-btn svg {
+      width: 10px;
+      height: 10px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.2;
+      stroke-linecap: square;
+      stroke-linejoin: miter;
+    }
+    .win-btn .max-icon.restore { display: none; }
+    .app:not(.windowed) .win-btn .max-icon.normal { display: none; }
+    .app:not(.windowed) .win-btn .max-icon.restore { display: block; }
+
+    /* Settings gear in titlebar */
+    .titlebar-settings {
+      width: 32px;
+      height: 32px;
+      min-width: 32px;
+      min-height: 32px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      border-radius: 5px;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      text-decoration: none;
+      margin-right: 4px;
+      transition: background 0.12s, color 0.12s;
+      flex-shrink: 0;
+    }
+    .titlebar-settings:hover {
+      background: var(--surface-2);
+      color: var(--fg);
+    }
+    .titlebar-settings:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+    .titlebar-settings svg {
+      width: 15px;
+      height: 15px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.7;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .workspace {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      position: relative;
+    }
+    .main-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+    }
+
+    /* Tab bar */
+    .tabbar {
+      height: var(--tabbar-h);
+      background: oklch(0.14 0.01 250);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: stretch;
+      flex-shrink: 0;
+      padding: 0 4px;
+      gap: 2px;
+    }
+    .tabs {
+      display: flex;
+      align-items: stretch;
+      gap: 2px;
+      overflow-x: auto;
+      flex: 1;
+      min-width: 0;
+      scrollbar-width: none;
+    }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 0 10px 0 12px;
+      max-width: 200px;
+      min-width: 110px;
+      background: transparent;
+      border-radius: 6px 6px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 510;
+      letter-spacing: 0.01em;
+      cursor: pointer;
+      font-family: inherit;
+      position: relative;
+      margin-top: 4px;
+      border: 1px solid transparent;
+      border-bottom: none;
+    }
+    .tab:hover { background: var(--surface); color: var(--fg); }
+    .tab:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+      z-index: 1;
+    }
+    .tab.active {
+      background: var(--tab-active);
+      color: var(--fg);
+      border-color: var(--border);
+    }
+    .tab-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .tab-dot.ps { background: oklch(0.62 0.16 250); }
+    .tab-dot.wsl, .tab-dot.bash { background: oklch(0.72 0.14 85); }
+    .tab-dot.zsh { background: oklch(0.72 0.12 300); }
+    .tab-dot.cmd { background: oklch(0.68 0.12 145); }
+    .tab-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+      text-align: left;
+    }
+    .tab-close {
+      width: 16px;
+      height: 16px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      border-radius: 3px;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      opacity: 0;
+      flex-shrink: 0;
+      font-size: 12px;
+      line-height: 1;
+      padding: 0;
+    }
+    .tab:hover .tab-close, .tab.active .tab-close { opacity: 1; }
+    .tab-close:hover { background: var(--surface-2); color: var(--fg); }
+
+    .tab-add-wrap { position: relative; display: flex; align-items: center; padding: 4px 4px 0; }
+    .tab-add {
+      width: 28px;
+      height: 28px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      border-radius: 5px;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+    }
+    .tab-add:hover { background: var(--surface-2); color: var(--fg); }
+    .tab-add svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+
+    .shell-menu {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      z-index: 50;
+      width: 248px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: var(--shadow-panel);
+      padding: 6px;
+      display: none;
+    }
+    .shell-menu.open { display: block; }
+    .shell-menu-title {
+      font-size: 10px;
+      font-weight: 590;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 6px 8px 4px;
+    }
+    .shell-option {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border: none;
+      background: transparent;
+      color: var(--fg);
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+      text-align: left;
+    }
+    .shell-option:hover { background: var(--surface-2); }
+    .shell-option .so-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 6px;
+      display: grid;
+      place-items: center;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .shell-option .so-icon.ps { background: oklch(0.35 0.08 250); color: oklch(0.82 0.08 250); }
+    .shell-option .so-icon.wsl,
+    .shell-option .so-icon.bash { background: oklch(0.35 0.08 85); color: oklch(0.85 0.1 85); }
+    .shell-option .so-icon.zsh { background: oklch(0.34 0.08 300); color: oklch(0.86 0.08 300); }
+    .shell-option .so-icon.cmd { background: oklch(0.32 0.06 145); color: oklch(0.82 0.1 145); }
+    .shell-option .so-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .shell-option .so-name { font-size: 13px; font-weight: 550; }
+    .shell-option .so-desc { font-size: 11px; color: var(--muted); }
+
+    .tabbar-tools {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      padding: 0 4px;
+      border-left: 1px solid var(--border);
+      margin-left: 4px;
+    }
+
+    /* Terminal panes — recursive split tree */
+    .panes {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+      min-width: 0;
+      background: var(--term-bg);
+    }
+    .split-group {
+      flex: 1 1 0;
+      display: flex;
+      min-width: 0;
+      min-height: 0;
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+    .split-group.split-h { flex-direction: row; }
+    .split-group.split-v { flex-direction: column; }
+    .split-child {
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      overflow: hidden;
+    }
+    .split-child > .pane,
+    .split-child > .split-group {
+      flex: 1 1 0;
+      width: 100%;
+      height: 100%;
+    }
+    .pane {
+      flex: 1 1 0;
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      border: 1px solid transparent;
+    }
+    .pane.active-pane {
+      border-color: var(--border);
+      box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--fg) 12%, transparent);
+      z-index: 1;
+    }
+    .pane-header {
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 6px 0 8px;
+      background: color-mix(in oklch, var(--term-bg) 70%, var(--surface));
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.02em;
+      flex-shrink: 0;
+      gap: 8px;
+    }
+    .pane-header .ph-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .pane-header .ph-right {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      flex-shrink: 0;
+    }
+    .pane-num {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0 5px;
+      height: 16px;
+      line-height: 16px;
+      flex-shrink: 0;
+      user-select: none;
+    }
+    .pane.active-pane .pane-num {
+      color: var(--fg);
+      border-color: color-mix(in oklch, var(--fg) 22%, var(--border));
+      background: var(--surface-2);
+    }
+    .pane-close {
+      width: 18px;
+      height: 18px;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      border-radius: 3px;
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      font-size: 13px;
+      line-height: 1;
+      padding: 0;
+      font-family: inherit;
+    }
+    .pane-close:hover {
+      background: oklch(0.55 0.18 25 / 0.35);
+      color: oklch(0.95 0.02 25);
+    }
+    .pane-close:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+    .pane-close:disabled {
+      opacity: 0.25;
+      pointer-events: none;
+    }
+    .pane-body {
+      flex: 1;
+      overflow: auto;
+      padding: 10px 12px 8px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.55;
+      color: var(--term-fg);
+      cursor: text;
+    }
+    .pane-body::-webkit-scrollbar { width: 8px; height: 8px; }
+    .pane-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    .term-line { white-space: pre-wrap; word-break: break-word; }
+    .term-line.out { color: var(--term-fg); }
+    .term-line.err { color: var(--term-err); }
+    .term-line.info { color: var(--muted); }
+    .prompt-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 0;
+      margin-top: 2px;
+    }
+    .prompt {
+      color: var(--term-prompt);
+      flex-shrink: 0;
+      user-select: none;
+    }
+    .prompt-path { color: oklch(0.72 0.08 250); }
+    .prompt-sep { color: var(--muted); }
+    .cmd-input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--term-cmd);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.55;
+      caret-color: var(--accent);
+      min-width: 0;
+      resize: none;
+      padding: 0;
+      field-sizing: content;
+    }
+    .split-gutter {
+      flex: 0 0 4px;
+      background: var(--border);
+      cursor: col-resize;
+      position: relative;
+      z-index: 2;
+      align-self: stretch;
+    }
+    .split-group.split-v > .split-gutter { cursor: row-resize; }
+    .split-gutter:hover, .split-gutter.dragging {
+      background: color-mix(in oklch, var(--fg) 35%, var(--border));
+    }
+
+    /* AI side panel */
+    .ai-panel {
+      width: var(--ai-width, 360px);
+      min-width: 280px;
+      max-width: 520px;
+      background: var(--surface);
+      border-left: 1px solid var(--border);
+      display: none;
+      flex-direction: column;
+      flex-shrink: 0;
+      position: relative;
+    }
+    .ai-panel.open { display: flex; }
+    .ai-resize {
+      width: 4px;
+      cursor: col-resize;
+      background: transparent;
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      z-index: 5;
+    }
+    .ai-resize:hover, .ai-resize.dragging { background: var(--accent); }
+    .ai-header {
+      height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .ai-header-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 590;
+      letter-spacing: -0.01em;
+    }
+    .ai-badge {
+      font-size: 10px;
+      font-weight: 510;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      background: transparent;
+      border: 1px solid var(--border);
+      padding: 1px 6px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .ai-badge::before {
+      content: "";
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--success);
+      flex-shrink: 0;
+    }
+    .ai-header-focus {
+      font-size: 11px;
+      color: var(--muted);
+      font-family: var(--font-mono);
+    }
+    .msg-meta-tags {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: 6px;
+      text-transform: none;
+      letter-spacing: 0;
+      font-weight: 510;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: color-mix(in oklch, var(--muted) 85%, var(--accent));
+    }
+    .ai-messages {
+      flex: 1;
+      overflow: auto;
+      padding: 14px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .ai-messages::-webkit-scrollbar { width: 6px; }
+    .ai-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .msg { display: flex; flex-direction: column; gap: 6px; max-width: 100%; }
+    .msg.user { align-items: flex-end; }
+    .msg-meta {
+      font-size: 10px;
+      font-weight: 590;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .msg-bubble {
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.55;
+      max-width: 100%;
+    }
+    .msg.user .msg-bubble {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--fg);
+      border-bottom-right-radius: 3px;
+    }
+    .msg.assistant .msg-bubble {
+      background: transparent;
+      border: none;
+      padding: 0;
+      color: var(--fg);
+      border-bottom-left-radius: 0;
+    }
+    .msg-bubble code {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      background: var(--term-bg);
+      padding: 1px 5px;
+      border-radius: 3px;
+      border: 1px solid var(--border);
+      color: var(--term-fg);
+    }
+    .msg-bubble pre {
+      margin: 8px 0 0;
+      padding: 10px;
+      background: var(--term-bg);
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.5;
+      overflow-x: auto;
+      color: var(--term-fg);
+      white-space: pre-wrap;
+    }
+    .msg-actions { display: flex; gap: 4px; margin-top: 2px; }
+    .chip-btn {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 510;
+      letter-spacing: 0.02em;
+      padding: 4px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .chip-btn:hover {
+      border-color: color-mix(in oklch, var(--fg) 28%, var(--border));
+      color: var(--fg);
+      background: var(--surface-2);
+    }
+    .ai-suggestions {
+      padding: 0 12px 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .suggest {
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+      padding: 5px 9px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: border-color 0.12s, color 0.12s, background 0.12s;
+    }
+    .suggest:hover {
+      border-color: color-mix(in oklch, var(--fg) 22%, var(--border));
+      color: var(--fg);
+      background: var(--surface);
+    }
+    .ai-composer {
+      border-top: 1px solid var(--border);
+      padding: 10px 12px 12px;
+      flex-shrink: 0;
+      background: var(--surface);
+    }
+    .ai-input-wrap {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      transition: border-color 0.12s;
+    }
+    .ai-input-wrap:focus-within { border-color: var(--accent-dim); }
+    .ai-input {
+      width: 100%;
+      border: none;
+      background: transparent;
+      color: var(--fg);
+      font-family: inherit;
+      font-size: 13px;
+      line-height: 1.45;
+      resize: none;
+      outline: none;
+      min-height: 44px;
+      max-height: 120px;
+    }
+    .ai-input::placeholder { color: var(--muted); }
+    .ai-composer-bar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    .ai-composer-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    /* Model picker — pill + tree dropdown (next to send) */
+    .ai-model-picker {
+      position: relative;
+      flex-shrink: 0;
+    }
+    .ai-model-trigger {
+      height: 28px;
+      max-width: 168px;
+      padding: 0 10px 0 12px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--fg);
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 510;
+      letter-spacing: 0.01em;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
+    }
+    .ai-model-trigger:hover {
+      border-color: color-mix(in oklch, var(--accent) 35%, var(--border));
+      background: color-mix(in oklch, var(--surface-2) 70%, var(--surface));
+    }
+    .ai-model-trigger:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+    .ai-model-picker.open .ai-model-trigger {
+      border-color: var(--accent-dim);
+      box-shadow: 0 0 0 2px color-mix(in oklch, var(--accent) 16%, transparent);
+    }
+    .ai-model-trigger-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 128px;
+    }
+    .ai-model-trigger svg {
+      width: 12px;
+      height: 12px;
+      stroke: var(--muted);
+      fill: none;
+      stroke-width: 2;
+      flex-shrink: 0;
+      transition: transform 0.15s;
+    }
+    .ai-model-picker.open .ai-model-trigger svg { transform: rotate(180deg); }
+
+    .ai-model-menu {
+      display: none;
+      position: absolute;
+      right: 0;
+      bottom: calc(100% + 8px);
+      width: 260px;
+      max-height: min(360px, 50vh);
+      overflow: auto;
+      padding: 6px;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: color-mix(in oklch, var(--surface) 92%, oklch(0.22 0.01 250));
+      box-shadow: 0 16px 40px oklch(0 0 0 / 0.45), 0 0 0 1px oklch(1 0 0 / 0.04);
+      z-index: 40;
+    }
+    .ai-model-picker.open .ai-model-menu { display: block; }
+    .ai-menu-panel { display: none; }
+    .ai-menu-panel.active { display: block; }
+
+    .ai-menu-row {
+      width: 100%;
+      border: none;
+      background: transparent;
+      color: var(--fg);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 510;
+      letter-spacing: 0.01em;
+      text-align: left;
+      padding: 10px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      transition: background 0.1s;
+    }
+    .ai-menu-row:hover { background: var(--surface-2); }
+    .ai-menu-row:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
+    .ai-menu-row.selected {
+      background: var(--surface-2);
+      color: var(--fg);
+      box-shadow: inset 2px 0 0 var(--fg);
+    }
+    .ai-menu-row .row-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .ai-menu-row .row-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 510;
+      flex-shrink: 0;
+    }
+    .ai-menu-row .row-right svg {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.8;
+    }
+    .ai-menu-row.danger-ish .row-left { color: var(--muted); }
+    .ai-menu-sep {
+      height: 1px;
+      margin: 4px 8px;
+      background: var(--border);
+    }
+    .ai-menu-back {
+      width: 100%;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 510;
+      letter-spacing: 0.02em;
+      text-align: left;
+      padding: 8px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .ai-menu-back:hover { background: var(--surface-2); color: var(--fg); }
+    .ai-menu-back svg {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.8;
+    }
+    .ai-menu-title {
+      padding: 4px 12px 8px;
+      font-size: 11px;
+      font-weight: 590;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .send-btn {
+      height: 28px;
+      padding: 0 12px;
+      border: 1px solid color-mix(in oklch, var(--accent) 40%, var(--border));
+      border-radius: 5px;
+      background: color-mix(in oklch, var(--accent) 22%, var(--surface-2));
+      color: var(--fg);
+      font-size: 12px;
+      font-weight: 550;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      font-family: inherit;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .send-btn:hover {
+      background: color-mix(in oklch, var(--accent) 32%, var(--surface-2));
+      border-color: color-mix(in oklch, var(--accent) 55%, var(--border));
+    }
+    .send-btn:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .send-btn:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
+    .send-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; }
+
+    .restore-chip:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .suggest:focus-visible,
+    .chip-btn:focus-visible,
+    .tab-add:focus-visible,
+    .shell-option:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+    .ai-input:focus-visible {
+      outline: none;
+    }
+    .cmd-input:focus-visible {
+      outline: none;
+    }
+
+    /* Narrow / short viewports */
+    @media (max-width: 900px) {
+      .ai-panel {
+        position: absolute;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        z-index: 20;
+        max-width: min(360px, 92vw);
+        box-shadow: -12px 0 32px oklch(0 0 0 / 0.35);
+      }
+      .ai-panel:not(.open) { display: none; }
+      .status-right .status-item:nth-child(n+4) { display: none; }
+      .app-title { max-width: 140px; }
+    }
+    @media (max-width: 560px) {
+      .titlebar-center .icon-btn#btn-split-h,
+      .titlebar-center .icon-btn#btn-split-v { display: none; }
+      .statusbar { font-size: 10px; gap: 0; }
+      .status-left, .status-right { gap: 8px; }
+      .ai-model-trigger-label { max-width: 88px; }
+    }
+
+    /* Status bar */
+    .statusbar {
+      height: var(--statusbar-h);
+      background: oklch(0.14 0.01 250);
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 10px;
+      font-size: 11px;
+      color: var(--muted);
+      flex-shrink: 0;
+      font-family: var(--font-mono);
+      letter-spacing: 0.01em;
+    }
+    .status-left, .status-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+    .status-accent { color: var(--accent); }
+
+    .toast {
+      position: absolute;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%) translateY(12px);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--fg);
+      font-size: 12px;
+      padding: 8px 14px;
+      border-radius: 6px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s, transform 0.2s;
+      z-index: 100;
+      box-shadow: var(--shadow-panel);
+    }
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+  </style>
+</head>
+<body>
+  <button class="restore-chip" id="restore-chip" type="button" data-od-id="restore-chip" aria-label="还原 Shell Workbench">
+    <span class="rc-glyph" aria-hidden="true">SW</span>
+    <span>Shell Workbench · 点击还原</span>
+  </button>
+
+  <div class="app" id="app" data-od-id="app-shell">
+      <header class="titlebar" id="titlebar" data-od-id="titlebar">
+        <div class="titlebar-left">
+          <div class="app-icon" aria-hidden="true">SW</div>
+          <div class="app-title"><strong>Shell Workbench</strong> · 跨平台终端</div>
+        </div>
+        <div class="titlebar-center">
+          <button class="icon-btn" id="btn-split-h" title="在当前窗格内向右拆分 50%" data-od-id="btn-split-h" aria-label="在当前窗格内向右拆分">
+            <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1.5"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+          </button>
+          <button class="icon-btn" id="btn-split-v" title="在当前窗格内向下拆分 50%" data-od-id="btn-split-v" aria-label="在当前窗格内向下拆分">
+            <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1.5"/><line x1="3" y1="12" x2="21" y2="12"/></svg>
+          </button>
+          <button class="icon-btn" id="btn-ai" title="Agent" data-od-id="btn-ai-toggle" aria-label="切换 Agent 面板">
+            <svg class="agent-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="5" y="7" width="14" height="11" rx="3"/>
+              <circle cx="9.5" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+              <circle cx="14.5" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+              <path d="M9 15.2c.8.7 1.6 1 3 1s2.2-.3 3-1"/>
+              <path d="M12 7V4.5"/>
+              <circle cx="12" cy="3.5" r="1" fill="currentColor" stroke="none"/>
+              <path d="M3.5 11.5h1.5M19 11.5h1.5"/>
+            </svg>
+          </button>
+          <a class="titlebar-settings" href="settings.html" title="设置" aria-label="打开设置" data-od-id="btn-settings">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+          </a>
+        </div>
+        <div class="win-controls" data-od-id="win-controls">
+          <button class="win-btn" id="btn-min" title="最小化" aria-label="最小化" data-od-id="btn-minimize">
+            <svg viewBox="0 0 10 10"><line x1="1" y1="5" x2="9" y2="5"/></svg>
+          </button>
+          <button class="win-btn" id="btn-max" title="最大化" aria-label="最大化" data-od-id="btn-maximize">
+            <svg class="max-icon normal" viewBox="0 0 10 10"><rect x="1.2" y="1.2" width="7.6" height="7.6"/></svg>
+            <svg class="max-icon restore" viewBox="0 0 10 10">
+              <rect x="2.5" y="0.8" width="6.2" height="6.2"/>
+              <polyline points="0.8,2.8 0.8,9.2 7.2,9.2"/>
+            </svg>
+          </button>
+          <button class="win-btn close" id="btn-close" title="关闭" aria-label="关闭" data-od-id="btn-close">
+            <svg viewBox="0 0 10 10"><line x1="1.5" y1="1.5" x2="8.5" y2="8.5"/><line x1="8.5" y1="1.5" x2="1.5" y2="8.5"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="workspace" data-od-id="workspace">
+        <div class="main-col">
+          <div class="tabbar" data-od-id="tabbar">
+            <div class="tabs" id="tabs"></div>
+            <div class="tab-add-wrap">
+              <button class="tab-add" id="btn-new-tab" title="新建终端" data-od-id="btn-new-tab" aria-label="新建终端" aria-haspopup="menu" aria-expanded="false">
+                <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+              <div class="shell-menu" id="shell-menu" role="menu" data-od-id="shell-menu">
+                <div class="shell-menu-title">选择 Shell · 跨平台</div>
+                <button class="shell-option" data-shell="ps" role="menuitem">
+                  <span class="so-icon ps">PS</span>
+                  <span class="so-text">
+                    <span class="so-name">PowerShell 7</span>
+                    <span class="so-desc">Win / macOS / Linux · pwsh</span>
+                  </span>
+                </button>
+                <button class="shell-option" data-shell="bash" role="menuitem">
+                  <span class="so-icon bash">sh</span>
+                  <span class="so-text">
+                    <span class="so-name">Bash</span>
+                    <span class="so-desc">macOS / Linux · /bin/bash</span>
+                  </span>
+                </button>
+                <button class="shell-option" data-shell="zsh" role="menuitem">
+                  <span class="so-icon zsh">Z</span>
+                  <span class="so-text">
+                    <span class="so-name">Zsh</span>
+                    <span class="so-desc">macOS 默认 · /bin/zsh</span>
+                  </span>
+                </button>
+                <button class="shell-option" data-shell="cmd" role="menuitem">
+                  <span class="so-icon cmd">C\</span>
+                  <span class="so-text">
+                    <span class="so-name">命令提示符</span>
+                    <span class="so-desc">Windows · cmd.exe</span>
+                  </span>
+                </button>
+              </div>
+            </div>
+            <div class="tabbar-tools">
+              <button class="icon-btn" id="btn-clear" title="清屏" aria-label="清屏">
+                <svg viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="panes" id="panes" data-od-id="terminal-panes"></div>
+        </div>
+
+        <aside class="ai-panel open" id="ai-panel" data-od-id="ai-panel" style="--ai-width: 360px">
+          <div class="ai-resize" id="ai-resize" data-od-id="ai-resize"></div>
+          <div class="ai-header">
+            <div class="ai-header-title">
+              <svg class="agent-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="5" y="7" width="14" height="11" rx="3"/>
+                <circle cx="9.5" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+                <circle cx="14.5" cy="12" r="1.2" fill="currentColor" stroke="none"/>
+                <path d="M9 15.2c.8.7 1.6 1 3 1s2.2-.3 3-1"/>
+                <path d="M12 7V4.5"/>
+                <circle cx="12" cy="3.5" r="1" fill="currentColor" stroke="none"/>
+                <path d="M3.5 11.5h1.5M19 11.5h1.5"/>
+              </svg>
+              <span>Agent</span>
+              <span class="ai-badge">在线</span>
+            </div>
+            <span class="ai-header-focus" id="ai-focus-label">焦点 · 窗格 #1</span>
+          </div>
+          <div class="ai-messages" id="ai-messages" data-od-id="ai-messages">
+            <div class="msg assistant">
+              <div class="msg-bubble">
+                引用窗格用 <code>#1</code> / <code>#2</code>。分屏在焦点窗格内 50% 拆开；× 关闭该块。模型与强度在发送旁切换。
+              </div>
+            </div>
+          </div>
+          <div class="ai-suggestions" data-od-id="ai-suggestions">
+            <button class="suggest" data-prompt="解释最后一条命令做了什么">解释上一条命令</button>
+            <button class="suggest" data-prompt="列出本机正在监听的端口">列出监听端口</button>
+            <button class="suggest" data-prompt="把当前目录文件按大小排序">按大小列目录</button>
+          </div>
+          <div class="ai-composer" data-od-id="ai-composer">
+            <div class="ai-input-wrap">
+              <textarea class="ai-input" id="ai-input" rows="2" placeholder="描述你想执行的任务，或粘贴报错…"></textarea>
+              <div class="ai-composer-bar">
+                <div class="ai-composer-right">
+                  <div class="ai-model-picker" id="ai-model-picker" data-od-id="ai-model-picker">
+                    <button type="button" class="ai-model-trigger" id="ai-model-trigger" data-od-id="ai-model-trigger" aria-haspopup="menu" aria-expanded="false" aria-label="选择模型与推理强度">
+                      <span class="ai-model-trigger-label" id="ai-model-trigger-label">Fable 5 中</span>
+                      <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
+                    <div class="ai-model-menu" id="ai-model-menu" role="menu" data-od-id="ai-model-menu">
+                      <div class="ai-menu-panel active" data-panel="root" id="ai-panel-root">
+                        <button type="button" class="ai-menu-row" data-nav="model" role="menuitem">
+                          <span class="row-left">模型</span>
+                          <span class="row-right"><span id="ai-menu-model-val">Fable 5</span>
+                            <svg viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"/></svg>
+                          </span>
+                        </button>
+                        <button type="button" class="ai-menu-row" data-nav="effort" role="menuitem">
+                          <span class="row-left">推理强度</span>
+                          <span class="row-right"><span id="ai-menu-effort-val">中</span>
+                            <svg viewBox="0 0 24 24"><polyline points="9 6 15 12 9 18"/></svg>
+                          </span>
+                        </button>
+                        <div class="ai-menu-sep"></div>
+                        <button type="button" class="ai-menu-row danger-ish" id="ai-reset-defaults" role="menuitem">
+                          <span class="row-left">重置为默认设置</span>
+                          <span class="row-right">
+                            <svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><polyline points="3 4 3 10 9 10"/></svg>
+                          </span>
+                        </button>
+                      </div>
+                      <div class="ai-menu-panel" data-panel="model" id="ai-panel-model">
+                        <button type="button" class="ai-menu-back" data-nav="root">
+                          <svg viewBox="0 0 24 24"><polyline points="15 6 9 12 15 18"/></svg>
+                          模型
+                        </button>
+                        <div class="ai-menu-title">选择模型</div>
+                        <div id="ai-model-options"></div>
+                      </div>
+                      <div class="ai-menu-panel" data-panel="effort" id="ai-panel-effort">
+                        <button type="button" class="ai-menu-back" data-nav="root">
+                          <svg viewBox="0 0 24 24"><polyline points="15 6 9 12 15 18"/></svg>
+                          推理强度
+                        </button>
+                        <div class="ai-menu-title">选择推理强度</div>
+                        <div id="ai-effort-options"></div>
+                      </div>
+                    </div>
+                  </div>
+                  <button class="send-btn" id="ai-send" data-od-id="ai-send">
+                    发送
+                    <svg viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <footer class="statusbar" data-od-id="statusbar">
+        <div class="status-left">
+          <span class="status-item"><span class="status-dot"></span> 已连接本机 Shell</span>
+          <span class="status-item" id="status-shell">PowerShell 7</span>
+          <span class="status-item" id="status-cwd">C:\Users\dev</span>
+        </div>
+        <div class="status-right">
+          <span class="status-item" id="status-win">最大化</span>
+          <span class="status-item" id="status-split">1 窗格</span>
+          <span class="status-item" id="status-pane">焦点 #1</span>
+          <span class="status-item" id="status-encoding">UTF-8</span>
+          <span class="status-item">Ln 1, Col 1</span>
+        </div>
+      </footer>
+
+      <div class="toast" id="toast" role="status"></div>
+  </div>
+
+  <script>
+    const SHELLS = {
+      ps: {
+        id: "ps",
+        name: "PowerShell 7",
+        short: "pwsh",
+        cwd: "C:\\Users\\dev",
+        promptHtml: () => `<span class="prompt-path">PS C:\\Users\\dev</span><span class="prompt-sep">&gt; </span>`,
+        banner: [
+          { cls: "info", text: "PowerShell 7.4.6 · Shell Workbench" },
+          { cls: "info", text: "Copyright (c) Microsoft Corporation. 输入 help 获取帮助。" },
+          { cls: "out", text: "" }
+        ],
+        run(cmd) {
+          const c = cmd.trim();
+          if (!c) return [];
+          if (c === "help" || c === "Get-Help") {
+            return [
+              { cls: "out", text: "常用命令: Get-ChildItem (ls), Get-Process, Get-Location (pwd), clear, exit" },
+              { cls: "out", text: "提示: 右侧 Agent 可生成并解释命令；分屏序号便于 Agent 定位窗格。" }
+            ];
+          }
+          if (/^(ls|dir|gci|Get-ChildItem)\b/i.test(c)) {
+            return [
+              { cls: "out", text: "    Directory: C:\\Users\\dev\n" },
+              { cls: "out", text: "Mode                 LastWriteTime         Length Name" },
+              { cls: "out", text: "----                 -------------         ------ ----" },
+              { cls: "out", text: "d-----        2026/7/22     10:12                Projects" },
+              { cls: "out", text: "d-----        2026/7/20     18:40                .ssh" },
+              { cls: "out", text: "-a----        2026/7/23      9:01            248 profile.ps1" },
+              { cls: "out", text: "-a----        2026/7/21     14:22           1820 notes.md" }
+            ];
+          }
+          if (/^(pwd|Get-Location)\b/i.test(c)) {
+            return [{ cls: "out", text: "\nPath\n----\nC:\\Users\\dev\n" }];
+          }
+          if (/^(cls|clear|Clear-Host)\b/i.test(c)) return [{ clear: true }];
+          if (/^echo\s+/i.test(c) || /^Write-Output\s+/i.test(c)) {
+            const m = c.replace(/^(echo|Write-Output)\s+/i, "").replace(/^["']|["']$/g, "");
+            return [{ cls: "out", text: m }];
+          }
+          if (/^whoami\b/i.test(c)) return [{ cls: "out", text: "dev-machine\\dev" }];
+          if (/^exit\b/i.test(c)) return [{ cls: "info", text: "[会话保持 — 原型中不会关闭标签]" }];
+          return [
+            { cls: "err", text: c + " : 无法将“" + c.split(/\s+/)[0] + "”项识别为 cmdlet、函数、脚本文件或可运行程序的名称。" },
+            { cls: "err", text: "所在位置 行:1 字符: 1" }
+          ];
+        }
+      },
+      bash: {
+        id: "bash",
+        name: "Bash",
+        short: "bash",
+        cwd: "/home/dev",
+        promptHtml: () => `<span class="prompt-path">dev@host</span><span class="prompt-sep">:</span><span style="color:oklch(0.72 0.1 250)">~</span><span class="prompt-sep">$ </span>`,
+        banner: [
+          { cls: "info", text: "GNU bash, 5.2.21 · Shell Workbench · Linux / macOS / WSL" },
+          { cls: "info", text: "跨平台终端外壳 · 本机 /bin/bash" },
+          { cls: "out", text: "" }
+        ],
+        run(cmd) {
+          const c = cmd.trim();
+          if (!c) return [];
+          if (c === "help") return [{ cls: "out", text: "GNU bash — try ls, pwd, uname -a, clear" }];
+          if (/^ls\b/.test(c)) return [{ cls: "out", text: "Desktop  Documents  Downloads  projects  .bashrc  .profile" }];
+          if (/^pwd\b/.test(c)) return [{ cls: "out", text: "/home/dev" }];
+          if (/^uname\b/.test(c)) return [{ cls: "out", text: "Linux host 6.8.0-generic x86_64 GNU/Linux" }];
+          if (/^(clear|cls)\b/.test(c)) return [{ clear: true }];
+          if (/^echo\s+/.test(c)) return [{ cls: "out", text: c.replace(/^echo\s+/, "").replace(/^["']|["']$/g, "") }];
+          if (/^whoami\b/.test(c)) return [{ cls: "out", text: "dev" }];
+          return [{ cls: "err", text: "bash: " + c.split(/\s+/)[0] + ": command not found" }];
+        }
+      },
+      zsh: {
+        id: "zsh",
+        name: "Zsh",
+        short: "zsh",
+        cwd: "/Users/dev",
+        promptHtml: () => `<span class="prompt-path">dev@mac</span><span class="prompt-sep"> </span><span style="color:oklch(0.72 0.1 250)">~</span><span class="prompt-sep"> % </span>`,
+        banner: [
+          { cls: "info", text: "zsh 5.9 · Shell Workbench · macOS" },
+          { cls: "info", text: "跨平台终端外壳 · /bin/zsh" },
+          { cls: "out", text: "" }
+        ],
+        run(cmd) {
+          const c = cmd.trim();
+          if (!c) return [];
+          if (c === "help") return [{ cls: "out", text: "zsh — try ls, pwd, uname -a, clear" }];
+          if (/^ls\b/.test(c)) return [{ cls: "out", text: "Applications  Desktop  Documents  Downloads  Projects" }];
+          if (/^pwd\b/.test(c)) return [{ cls: "out", text: "/Users/dev" }];
+          if (/^uname\b/.test(c)) return [{ cls: "out", text: "Darwin mac 24.0.0 Darwin Kernel arm64" }];
+          if (/^(clear|cls)\b/.test(c)) return [{ clear: true }];
+          if (/^echo\s+/.test(c)) return [{ cls: "out", text: c.replace(/^echo\s+/, "").replace(/^["']|["']$/g, "") }];
+          if (/^whoami\b/.test(c)) return [{ cls: "out", text: "dev" }];
+          return [{ cls: "err", text: "zsh: command not found: " + c.split(/\s+/)[0] }];
+        }
+      },
+      wsl: {
+        id: "wsl",
+        name: "WSL · Ubuntu",
+        short: "bash",
+        cwd: "/home/user",
+        promptHtml: () => `<span class="prompt-path">user@wsl</span><span class="prompt-sep">:</span><span style="color:oklch(0.72 0.1 250)">~</span><span class="prompt-sep">$ </span>`,
+        banner: [
+          { cls: "info", text: "Welcome to Ubuntu 24.04.1 LTS (WSL2)" },
+          { cls: "info", text: "Windows 子系统 · 跨平台外壳可挂载" },
+          { cls: "out", text: "" }
+        ],
+        run(cmd) {
+          const c = cmd.trim();
+          if (!c) return [];
+          if (c === "help") return [{ cls: "out", text: "GNU bash, version 5.2 — try ls, pwd, uname -a, clear" }];
+          if (/^ls\b/.test(c)) return [{ cls: "out", text: "Desktop  Documents  Downloads  projects  .bashrc  .profile" }];
+          if (/^pwd\b/.test(c)) return [{ cls: "out", text: "/home/user" }];
+          if (/^uname\b/.test(c)) return [{ cls: "out", text: "Linux wsl 5.15.153.1-microsoft-standard-WSL2 x86_64 GNU/Linux" }];
+          if (/^(clear|cls)\b/.test(c)) return [{ clear: true }];
+          if (/^echo\s+/.test(c)) return [{ cls: "out", text: c.replace(/^echo\s+/, "").replace(/^["']|["']$/g, "") }];
+          if (/^whoami\b/.test(c)) return [{ cls: "out", text: "user" }];
+          return [{ cls: "err", text: "bash: " + c.split(/\s+/)[0] + ": command not found" }];
+        }
+      },
+      cmd: {
+        id: "cmd",
+        name: "命令提示符",
+        short: "cmd",
+        cwd: "C:\\Users\\dev",
+        promptHtml: () => `<span class="prompt-path">C:\\Users\\dev</span><span class="prompt-sep">&gt;</span>`,
+        banner: [
+          { cls: "info", text: "Microsoft Windows [Version 10.0.26100.1]" },
+          { cls: "info", text: "(c) Microsoft Corporation. 保留所有权利。" },
+          { cls: "out", text: "" }
+        ],
+        run(cmd) {
+          const c = cmd.trim();
+          if (!c) return [];
+          if (/^(dir|ls)\b/i.test(c)) {
+            return [
+              { cls: "out", text: " 驱动器 C 中的卷是 Windows" },
+              { cls: "out", text: " 卷的序列号是 A1B2-C3D4\n" },
+              { cls: "out", text: " C:\\Users\\dev 的目录\n" },
+              { cls: "out", text: "2026/07/22  10:12    <DIR>          Projects" },
+              { cls: "out", text: "2026/07/23  09:01               248 profile.ps1" },
+              { cls: "out", text: "               1 个文件            248 字节" },
+              { cls: "out", text: "               1 个目录 128,492,134,400 可用字节" }
+            ];
+          }
+          if (/^echo\s+/i.test(c)) return [{ cls: "out", text: c.replace(/^echo\s+/i, "") }];
+          if (/^cd\b/i.test(c)) return [];
+          if (/^(cls|clear)\b/i.test(c)) return [{ clear: true }];
+          return [{ cls: "err", text: "'" + c.split(/\s+/)[0] + "' 不是内部或外部命令，也不是可运行的程序或批处理文件。" }];
+        }
+      }
+    };
+
+    const MAX_PANES = 6;
+
+    const AI_MODELS = {
+      "claude-fable-5": { id: "claude-fable-5", label: "Claude Fable 5", short: "Fable 5" },
+      "claude-opus-4-8": { id: "claude-opus-4-8", label: "Claude Opus 4.8", short: "Opus 4.8" },
+      "claude-sonnet-5": { id: "claude-sonnet-5", label: "Claude Sonnet 5", short: "Sonnet 5" },
+      "claude-haiku-4-5": { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", short: "Haiku 4.5" }
+    };
+    const AI_EFFORTS = {
+      low: { id: "low", label: "低 · 快", short: "低", delay: 220 },
+      medium: { id: "medium", label: "中 · 均衡", short: "中", delay: 380 },
+      high: { id: "high", label: "高 · 深入", short: "高", delay: 620 },
+      max: { id: "max", label: "最高 · 最强", short: "最高", delay: 900 }
+    };
+
+    const state = {
+      tabs: [],
+      activeTabId: null,
+      nextId: 1,
+      nextPaneSerial: 1,
+      activePaneId: null,
+      aiOpen: true,
+      aiWidth: 360,
+      aiModel: "claude-fable-5",
+      aiEffort: "medium",
+      win: "maximized" // maximized | windowed | minimized | closed
+    };
+
+    const el = {
+      app: document.getElementById("app"),
+      titlebar: document.getElementById("titlebar"),
+      tabs: document.getElementById("tabs"),
+      panes: document.getElementById("panes"),
+      shellMenu: document.getElementById("shell-menu"),
+      btnNewTab: document.getElementById("btn-new-tab"),
+      btnAi: document.getElementById("btn-ai"),
+      aiPanel: document.getElementById("ai-panel"),
+      aiResize: document.getElementById("ai-resize"),
+      aiMessages: document.getElementById("ai-messages"),
+      aiInput: document.getElementById("ai-input"),
+      aiSend: document.getElementById("ai-send"),
+      aiModelPicker: document.getElementById("ai-model-picker"),
+      aiModelTrigger: document.getElementById("ai-model-trigger"),
+      aiModelTriggerLabel: document.getElementById("ai-model-trigger-label"),
+      aiModelMenu: document.getElementById("ai-model-menu"),
+      aiMenuModelVal: document.getElementById("ai-menu-model-val"),
+      aiMenuEffortVal: document.getElementById("ai-menu-effort-val"),
+      aiModelOptions: document.getElementById("ai-model-options"),
+      aiEffortOptions: document.getElementById("ai-effort-options"),
+      aiResetDefaults: document.getElementById("ai-reset-defaults"),
+      toast: document.getElementById("toast"),
+      statusShell: document.getElementById("status-shell"),
+      statusCwd: document.getElementById("status-cwd"),
+      statusSplit: document.getElementById("status-split"),
+      statusPane: document.getElementById("status-pane"),
+      statusWin: document.getElementById("status-win"),
+      aiFocusLabel: document.getElementById("ai-focus-label"),
+      restoreChip: document.getElementById("restore-chip"),
+      btnMax: document.getElementById("btn-max")
+    };
+
+    function currentAiModel() {
+      return AI_MODELS[state.aiModel] || AI_MODELS["claude-fable-5"];
+    }
+    function currentAiEffort() {
+      return AI_EFFORTS[state.aiEffort] || AI_EFFORTS.medium;
+    }
+    function aiSummaryLabel() {
+      return currentAiModel().short + " " + currentAiEffort().short;
+    }
+    function showAiMenuPanel(name) {
+      if (!el.aiModelMenu) return;
+      el.aiModelMenu.querySelectorAll(".ai-menu-panel").forEach((p) => {
+        p.classList.toggle("active", p.dataset.panel === name);
+      });
+    }
+    function setAiMenuOpen(open) {
+      if (!el.aiModelPicker || !el.aiModelTrigger) return;
+      el.aiModelPicker.classList.toggle("open", open);
+      el.aiModelTrigger.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) showAiMenuPanel("root");
+    }
+    function renderAiOptionLists() {
+      if (el.aiModelOptions) {
+        el.aiModelOptions.innerHTML = "";
+        Object.values(AI_MODELS).forEach((m) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "ai-menu-row" + (m.id === state.aiModel ? " selected" : "");
+          btn.dataset.model = m.id;
+          btn.role = "menuitem";
+          btn.innerHTML =
+            '<span class="row-left">' + escapeHtml(m.label) + "</span>" +
+            (m.id === state.aiModel
+              ? '<span class="row-right"><svg viewBox="0 0 24 24"><polyline points="5 12 10 17 19 8"/></svg></span>'
+              : "");
+          btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            state.aiModel = m.id;
+            syncAiConfigUi();
+            showAiMenuPanel("root");
+            toast("模型 · " + m.label);
+          });
+          el.aiModelOptions.appendChild(btn);
+        });
+      }
+      if (el.aiEffortOptions) {
+        el.aiEffortOptions.innerHTML = "";
+        Object.values(AI_EFFORTS).forEach((ef) => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "ai-menu-row" + (ef.id === state.aiEffort ? " selected" : "");
+          btn.dataset.effort = ef.id;
+          btn.role = "menuitem";
+          btn.innerHTML =
+            '<span class="row-left">' + escapeHtml(ef.label) + "</span>" +
+            (ef.id === state.aiEffort
+              ? '<span class="row-right"><svg viewBox="0 0 24 24"><polyline points="5 12 10 17 19 8"/></svg></span>'
+              : "");
+          btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            state.aiEffort = ef.id;
+            syncAiConfigUi();
+            showAiMenuPanel("root");
+            toast("推理强度 · " + ef.label);
+          });
+          el.aiEffortOptions.appendChild(btn);
+        });
+      }
+    }
+    function syncAiConfigUi() {
+      const model = currentAiModel();
+      const effort = currentAiEffort();
+      if (el.aiModelTriggerLabel) el.aiModelTriggerLabel.textContent = aiSummaryLabel();
+      if (el.aiMenuModelVal) el.aiMenuModelVal.textContent = model.short;
+      if (el.aiMenuEffortVal) el.aiMenuEffortVal.textContent = effort.short;
+      renderAiOptionLists();
+    }
+
+    function toast(msg) {
+      el.toast.textContent = msg;
+      el.toast.classList.add("show");
+      clearTimeout(toast._t);
+      toast._t = setTimeout(() => el.toast.classList.remove("show"), 1800);
+    }
+
+    function setWindowState(next) {
+      state.win = next;
+      el.app.classList.toggle("windowed", next === "windowed");
+      el.app.classList.toggle("minimized", next === "minimized");
+      el.app.classList.toggle("closed", next === "closed");
+      const hidden = next === "minimized" || next === "closed";
+      el.restoreChip.classList.toggle("show", hidden);
+      el.restoreChip.querySelector("span:last-child").textContent =
+        next === "closed" ? "Shell Workbench · 点击重新打开" : "Shell Workbench · 点击还原";
+      el.btnMax.title = next === "windowed" ? "最大化" : "向下还原";
+      el.btnMax.setAttribute("aria-label", el.btnMax.title);
+      if (el.statusWin) {
+        el.statusWin.textContent =
+          next === "windowed" ? "窗口化" :
+          next === "minimized" ? "已最小化" :
+          next === "closed" ? "已关闭" : "最大化";
+      }
+    }
+
+    function restoreWindow() {
+      setWindowState("maximized");
+      toast("已还原窗口");
+      focusActiveInput();
+    }
+
+    document.getElementById("btn-min").addEventListener("click", (e) => {
+      e.stopPropagation();
+      setWindowState("minimized");
+      toast("已最小化 · 点击底部条还原");
+    });
+    document.getElementById("btn-max").addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (state.win === "windowed") {
+        setWindowState("maximized");
+        toast("已最大化");
+      } else {
+        setWindowState("windowed");
+        toast("已还原为窗口");
+      }
+    });
+    document.getElementById("btn-close").addEventListener("click", (e) => {
+      e.stopPropagation();
+      setWindowState("closed");
+      toast("窗口已关闭 · 点击底部条可重新打开");
+    });
+    el.titlebar.addEventListener("dblclick", (e) => {
+      if (e.target.closest(".win-btn, .icon-btn, a, button")) return;
+      if (state.win === "windowed") setWindowState("maximized");
+      else if (state.win === "maximized") setWindowState("windowed");
+    });
+    el.restoreChip.addEventListener("click", () => {
+      restoreWindow();
+    });
+
+    function makePane(shellKey) {
+      const shell = SHELLS[shellKey];
+      return {
+        type: "leaf",
+        id: "pane-" + state.nextId++,
+        serial: state.nextPaneSerial++,
+        shellKey,
+        history: shell.banner.map((l) => ({ ...l })),
+        cmdHistory: [],
+        histIdx: -1,
+        draft: ""
+      };
+    }
+
+    /** Collect all leaf panes from a layout tree (depth-first). */
+    function collectLeaves(node, out) {
+      if (!node) return out || [];
+      const acc = out || [];
+      if (node.type === "leaf") acc.push(node);
+      else if (node.type === "split") {
+        collectLeaves(node.a, acc);
+        collectLeaves(node.b, acc);
+      }
+      return acc;
+    }
+
+    function countLeaves(node) {
+      return collectLeaves(node).length;
+    }
+
+    function findLeaf(node, paneId) {
+      if (!node) return null;
+      if (node.type === "leaf") return node.id === paneId ? node : null;
+      return findLeaf(node.a, paneId) || findLeaf(node.b, paneId);
+    }
+
+    /** Replace a node matching pred with replacement; returns new root. */
+    function mapLayout(node, pred, replacement) {
+      if (!node) return node;
+      if (pred(node)) return typeof replacement === "function" ? replacement(node) : replacement;
+      if (node.type !== "split") return node;
+      const a = mapLayout(node.a, pred, replacement);
+      const b = mapLayout(node.b, pred, replacement);
+      if (a === node.a && b === node.b) return node;
+      return { ...node, a, b };
+    }
+
+    /**
+     * Remove a leaf by id. Sibling fills the space (parent collapses).
+     * Returns { root, closed } or null if not found / only leaf.
+     */
+    function removeLeaf(root, paneId) {
+      if (!root) return null;
+      if (root.type === "leaf") {
+        if (root.id !== paneId) return null;
+        return { root: null, closed: root };
+      }
+      if (root.type !== "split") return null;
+      if (root.a.type === "leaf" && root.a.id === paneId) {
+        return { root: root.b, closed: root.a };
+      }
+      if (root.b.type === "leaf" && root.b.id === paneId) {
+        return { root: root.a, closed: root.b };
+      }
+      const left = removeLeaf(root.a, paneId);
+      if (left) {
+        if (!left.root) return { root: root.b, closed: left.closed };
+        return { root: { ...root, a: left.root }, closed: left.closed };
+      }
+      const right = removeLeaf(root.b, paneId);
+      if (right) {
+        if (!right.root) return { root: root.a, closed: right.closed };
+        return { root: { ...root, b: right.root }, closed: right.closed };
+      }
+      return null;
+    }
+
+    /** Split the leaf with paneId into a split node (a=old, b=new), ratio 0.5. */
+    function splitLeaf(root, paneId, dir, newPane) {
+      return mapLayout(root, (n) => n.type === "leaf" && n.id === paneId, (leaf) => ({
+        type: "split",
+        id: "split-" + state.nextId++,
+        dir, // "h" | "v"
+        ratio: 0.5,
+        a: leaf,
+        b: newPane
+      }));
+    }
+
+    function createTab(shellKey) {
+      const shell = SHELLS[shellKey];
+      const pane = makePane(shellKey);
+      const id = "tab-" + state.nextId++;
+      const tab = {
+        id,
+        shellKey,
+        title: shell.name,
+        layout: pane,
+        activePaneId: pane.id
+      };
+      state.tabs.push(tab);
+      state.activeTabId = id;
+      state.activePaneId = pane.id;
+      renderAll();
+      focusActiveInput();
+      return tab;
+    }
+
+    function closeTab(id, e) {
+      if (e) e.stopPropagation();
+      const idx = state.tabs.findIndex((t) => t.id === id);
+      if (idx < 0) return;
+      if (state.tabs.length === 1) {
+        toast("至少保留一个终端标签");
+        return;
+      }
+      state.tabs.splice(idx, 1);
+      if (state.activeTabId === id) {
+        const next = state.tabs[Math.max(0, idx - 1)];
+        state.activeTabId = next.id;
+        state.activePaneId = next.activePaneId;
+      }
+      renderAll();
+    }
+
+    function activeTab() {
+      return state.tabs.find((t) => t.id === state.activeTabId) || state.tabs[0];
+    }
+
+    function activePane(tab) {
+      const t = tab || activeTab();
+      if (!t) return null;
+      const id = t.activePaneId || state.activePaneId;
+      return findLeaf(t.layout, id) || collectLeaves(t.layout)[0] || null;
+    }
+
+    function setActivePane(tab, paneId) {
+      tab.activePaneId = paneId;
+      state.activePaneId = paneId;
+      document.querySelectorAll(".pane").forEach((p) => {
+        p.classList.toggle("active-pane", p.dataset.paneId === paneId);
+      });
+      updateStatus();
+    }
+
+    /** Split the focused pane in-place (not global). dir: h = right, v = below. */
+    function addPane(dir) {
+      const tab = activeTab();
+      if (!tab) return;
+      const n = countLeaves(tab.layout);
+      if (n >= MAX_PANES) {
+        toast("最多 " + MAX_PANES + " 个分屏窗格");
+        return;
+      }
+      const focus = activePane(tab);
+      if (!focus) return;
+      const pane = makePane(tab.shellKey);
+      tab.layout = splitLeaf(tab.layout, focus.id, dir, pane);
+      setActivePane(tab, pane.id);
+      renderPanes();
+      focusActiveInput();
+      toast("在 #" + focus.serial + " 内拆分 → #" + pane.serial + "（" + (dir === "h" ? "左右" : "上下") + " 50%）");
+    }
+
+    function closePane(paneId, e) {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      const tab = activeTab();
+      if (!tab) return;
+      if (countLeaves(tab.layout) <= 1) {
+        toast("至少保留一个窗格 · 关闭标签请点标签上的 ×");
+        return;
+      }
+      const result = removeLeaf(tab.layout, paneId);
+      if (!result || !result.root) return;
+      const closed = result.closed;
+      tab.layout = result.root;
+      if (tab.activePaneId === paneId) {
+        const leaves = collectLeaves(tab.layout);
+        const next = leaves[leaves.length - 1] || leaves[0];
+        tab.activePaneId = next.id;
+        state.activePaneId = next.id;
+      }
+      renderPanes();
+      focusActiveInput();
+      toast("已关闭窗格 #" + closed.serial);
+    }
+
+    function renderTabs() {
+      el.tabs.innerHTML = "";
+      state.tabs.forEach((tab) => {
+        const btn = document.createElement("button");
+        btn.className = "tab" + (tab.id === state.activeTabId ? " active" : "");
+        btn.dataset.odId = "tab-" + tab.id;
+        const paneCount = countLeaves(tab.layout);
+        const label = paneCount > 1
+          ? escapeHtml(tab.title) + " · " + paneCount
+          : escapeHtml(tab.title);
+        btn.innerHTML =
+          `<span class="tab-dot ${tab.shellKey}"></span>` +
+          `<span class="tab-label">${label}</span>` +
+          `<span class="tab-close" data-close="${tab.id}" title="关闭" aria-label="关闭">×</span>`;
+        btn.addEventListener("click", (e) => {
+          if (e.target.closest("[data-close]")) {
+            closeTab(tab.id, e);
+            return;
+          }
+          state.activeTabId = tab.id;
+          const leaves = collectLeaves(tab.layout);
+          state.activePaneId = tab.activePaneId || (leaves[0] && leaves[0].id);
+          renderAll();
+          focusActiveInput();
+        });
+        el.tabs.appendChild(btn);
+      });
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function buildPaneEl(tab, paneData, leafCount) {
+      const shell = SHELLS[paneData.shellKey];
+      const isActive = (tab.activePaneId || state.activePaneId) === paneData.id;
+      const pane = document.createElement("div");
+      pane.className = "pane" + (isActive ? " active-pane" : "");
+      pane.dataset.paneId = paneData.id;
+      pane.dataset.paneSerial = String(paneData.serial);
+      pane.dataset.odId = "pane-" + paneData.serial;
+
+      const header = document.createElement("div");
+      header.className = "pane-header";
+      const left = document.createElement("span");
+      left.className = "ph-left";
+      left.innerHTML =
+        `<span class="pane-num" title="窗格序号 · Agent 可引用">#${paneData.serial}</span>` +
+        `<span class="tab-dot ${paneData.shellKey}" style="display:inline-block;width:7px;height:7px;border-radius:50%;flex-shrink:0"></span>` +
+        `<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(shell.short)} · ${escapeHtml(shell.cwd)}</span>`;
+      const right = document.createElement("span");
+      right.className = "ph-right";
+      const closeBtn = document.createElement("button");
+      closeBtn.className = "pane-close";
+      closeBtn.type = "button";
+      closeBtn.title = leafCount <= 1 ? "至少保留一个窗格" : "关闭窗格 #" + paneData.serial;
+      closeBtn.setAttribute("aria-label", "关闭窗格 #" + paneData.serial);
+      closeBtn.dataset.odId = "pane-close-" + paneData.serial;
+      closeBtn.textContent = "×";
+      closeBtn.disabled = leafCount <= 1;
+      closeBtn.addEventListener("click", (e) => closePane(paneData.id, e));
+      right.appendChild(closeBtn);
+      header.appendChild(left);
+      header.appendChild(right);
+
+      const body = document.createElement("div");
+      body.className = "pane-body";
+      body.dataset.odId = "term-body-" + paneData.serial;
+
+      paneData.history.forEach((line) => {
+        if (line.clear) return;
+        const div = document.createElement("div");
+        div.className = "term-line " + (line.cls || "out");
+        div.textContent = line.text;
+        body.appendChild(div);
+      });
+
+      const promptRow = document.createElement("div");
+      promptRow.className = "prompt-row";
+      const prompt = document.createElement("span");
+      prompt.className = "prompt";
+      prompt.innerHTML = shell.promptHtml();
+      const input = document.createElement("textarea");
+      input.className = "cmd-input";
+      input.rows = 1;
+      input.spellcheck = false;
+      input.dataset.paneId = paneData.id;
+      input.dataset.paneSerial = String(paneData.serial);
+      input.dataset.odId = "cmd-input-" + paneData.serial;
+      input.setAttribute("aria-label", "窗格 #" + paneData.serial + " 命令输入");
+      input.value = paneData.draft || "";
+      input.addEventListener("focus", () => setActivePane(tab, paneData.id));
+      input.addEventListener("keydown", (e) => onCmdKey(e, tab, paneData, input));
+      input.addEventListener("input", () => {
+        paneData.draft = input.value;
+        input.style.height = "auto";
+        input.style.height = Math.min(input.scrollHeight, 120) + "px";
+      });
+
+      promptRow.appendChild(prompt);
+      promptRow.appendChild(input);
+      body.appendChild(promptRow);
+
+      pane.appendChild(header);
+      pane.appendChild(body);
+      pane.addEventListener("mousedown", (e) => {
+        if (e.target.closest(".pane-close")) return;
+        setActivePane(tab, paneData.id);
+      });
+
+      requestAnimationFrame(() => {
+        body.scrollTop = body.scrollHeight;
+      });
+      return pane;
+    }
+
+    function renderLayoutNode(tab, node, container, leafCount) {
+      if (!node) return;
+      if (node.type === "leaf") {
+        container.appendChild(buildPaneEl(tab, node, leafCount));
+        return;
+      }
+      // split node
+      const group = document.createElement("div");
+      group.className = "split-group split-" + (node.dir === "v" ? "v" : "h");
+      group.dataset.splitId = node.id;
+      group.dataset.odId = "split-" + node.id;
+
+      const ratio = typeof node.ratio === "number" ? node.ratio : 0.5;
+      const childA = document.createElement("div");
+      childA.className = "split-child";
+      // flex-grow = ratio，与 gutter 解耦，保证在当前分组内按百分比拆
+      childA.style.flex = ratio + " 1 0px";
+      const childB = document.createElement("div");
+      childB.className = "split-child";
+      childB.style.flex = (1 - ratio) + " 1 0px";
+
+      renderLayoutNode(tab, node.a, childA, leafCount);
+      renderLayoutNode(tab, node.b, childB, leafCount);
+
+      const gutter = document.createElement("div");
+      gutter.className = "split-gutter";
+      gutter.dataset.odId = "split-gutter-" + node.id;
+      bindSplitGutter(gutter, node);
+
+      group.appendChild(childA);
+      group.appendChild(gutter);
+      group.appendChild(childB);
+      container.appendChild(group);
+    }
+
+    function renderPanes() {
+      const tab = activeTab();
+      if (!tab) return;
+      const leafCount = countLeaves(tab.layout);
+      el.panes.className = "panes";
+      el.panes.innerHTML = "";
+      renderLayoutNode(tab, tab.layout, el.panes, leafCount);
+      updateStatus();
+    }
+
+    function onCmdKey(e, tab, paneData, input) {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        runCommand(tab, paneData, input.value);
+        input.value = "";
+        paneData.draft = "";
+        input.style.height = "auto";
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        if (!paneData.cmdHistory.length) return;
+        e.preventDefault();
+        if (paneData.histIdx < 0) paneData.histIdx = paneData.cmdHistory.length - 1;
+        else paneData.histIdx = Math.max(0, paneData.histIdx - 1);
+        input.value = paneData.cmdHistory[paneData.histIdx] || "";
+        paneData.draft = input.value;
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        if (paneData.histIdx < 0) return;
+        e.preventDefault();
+        paneData.histIdx = Math.min(paneData.cmdHistory.length, paneData.histIdx + 1);
+        if (paneData.histIdx >= paneData.cmdHistory.length) {
+          paneData.histIdx = -1;
+          input.value = "";
+        } else {
+          input.value = paneData.cmdHistory[paneData.histIdx] || "";
+        }
+        paneData.draft = input.value;
+      }
+      if (e.key === "l" && e.ctrlKey) {
+        e.preventDefault();
+        clearTerminal(tab, paneData);
+      }
+      if (e.key === "c" && e.ctrlKey && !input.value) {
+        appendLines(paneData, [{ cls: "out", text: "^C" }]);
+        renderPanes();
+        focusActiveInput();
+      }
+    }
+
+    function appendLines(paneData, lines) {
+      lines.forEach((l) => {
+        if (l.clear) paneData.history = [];
+        else paneData.history.push(l);
+      });
+    }
+
+    function runCommand(tab, paneData, raw) {
+      if (!paneData) paneData = activePane(tab);
+      if (!paneData) return;
+      const shell = SHELLS[paneData.shellKey];
+      const cmd = raw.replace(/\n$/, "");
+      const promptText =
+        paneData.shellKey === "ps"
+          ? "PS " + shell.cwd + "> " + cmd
+          : paneData.shellKey === "wsl" || paneData.shellKey === "bash"
+          ? (paneData.shellKey === "bash" ? "dev@host:~$ " : "user@wsl:~$ ") + cmd
+          : paneData.shellKey === "zsh"
+          ? "dev@mac ~ % " + cmd
+          : shell.cwd + ">" + cmd;
+      appendLines(paneData, [{ cls: "out", text: promptText }]);
+      if (cmd.trim()) {
+        paneData.cmdHistory.push(cmd);
+        paneData.histIdx = -1;
+      }
+      const results = shell.run(cmd);
+      if (results.some((r) => r.clear)) {
+        paneData.history = shell.banner.map((l) => ({ ...l }));
+      } else {
+        appendLines(paneData, results);
+      }
+      renderPanes();
+      focusActiveInput();
+    }
+
+    function clearTerminal(tab, paneData) {
+      paneData = paneData || activePane(tab);
+      if (!paneData) return;
+      const shell = SHELLS[paneData.shellKey];
+      paneData.history = shell.banner.map((l) => ({ ...l }));
+      renderPanes();
+      focusActiveInput();
+    }
+
+    function focusActiveInput() {
+      requestAnimationFrame(() => {
+        const tab = activeTab();
+        const pane = activePane(tab);
+        const input = pane
+          ? document.querySelector('.cmd-input[data-pane-id="' + pane.id + '"]')
+          : document.querySelector(".cmd-input");
+        if (input && state.win !== "minimized" && state.win !== "closed") input.focus();
+      });
+    }
+
+    function updateStatus() {
+      const tab = activeTab();
+      if (!tab) return;
+      const pane = activePane(tab);
+      if (!pane) return;
+      const shell = SHELLS[pane.shellKey];
+      el.statusShell.textContent = shell.name;
+      el.statusCwd.textContent = shell.cwd;
+      if (el.aiFocusLabel) el.aiFocusLabel.textContent = "焦点 · 窗格 #" + pane.serial;
+      const n = countLeaves(tab.layout);
+      el.statusSplit.textContent = n === 1 ? "1 窗格" : n + " 窗格 · 树状分屏";
+      if (el.statusPane) el.statusPane.textContent = "焦点 #" + pane.serial;
+      el.btnAi.classList.toggle("active", state.aiOpen);
+      document.getElementById("btn-split-h").classList.remove("active");
+      document.getElementById("btn-split-v").classList.remove("active");
+    }
+
+    function renderAll() {
+      renderTabs();
+      renderPanes();
+      updateStatus();
+    }
+
+    el.btnNewTab.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const open = !el.shellMenu.classList.contains("open");
+      el.shellMenu.classList.toggle("open", open);
+      el.btnNewTab.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+    el.shellMenu.querySelectorAll(".shell-option").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        createTab(btn.dataset.shell);
+        el.shellMenu.classList.remove("open");
+        el.btnNewTab.setAttribute("aria-expanded", "false");
+        toast("已新建 " + SHELLS[btn.dataset.shell].name);
+      });
+    });
+    document.addEventListener("click", () => {
+      el.shellMenu.classList.remove("open");
+      el.btnNewTab.setAttribute("aria-expanded", "false");
+    });
+
+    document.getElementById("btn-split-h").addEventListener("click", () => {
+      addPane("h");
+    });
+    document.getElementById("btn-split-v").addEventListener("click", () => {
+      addPane("v");
+    });
+
+    function bindSplitGutter(gutter, splitNode) {
+      let start = 0;
+      let startRatio = 0.5;
+      let groupEl = null;
+      let total = 0;
+      const onMove = (ev) => {
+        if (!groupEl || !splitNode) return;
+        const vertical = splitNode.dir === "v";
+        const delta = vertical ? ev.clientY - start : ev.clientX - start;
+        let ratio = startRatio + delta / total;
+        const minPx = 100;
+        const minR = minPx / total;
+        ratio = Math.max(minR, Math.min(1 - minR, ratio));
+        splitNode.ratio = ratio;
+        const childA = gutter.previousElementSibling;
+        const childB = gutter.nextElementSibling;
+        if (childA) childA.style.flex = ratio + " 1 0px";
+        if (childB) childB.style.flex = (1 - ratio) + " 1 0px";
+      };
+      const onUp = () => {
+        gutter.classList.remove("dragging");
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      gutter.addEventListener("pointerdown", (ev) => {
+        ev.preventDefault();
+        groupEl = gutter.parentElement;
+        if (!groupEl || !splitNode) return;
+        const vertical = splitNode.dir === "v";
+        const rect = groupEl.getBoundingClientRect();
+        total = vertical ? rect.height : rect.width;
+        if (total < 40) return;
+        start = vertical ? ev.clientY : ev.clientX;
+        startRatio = typeof splitNode.ratio === "number" ? splitNode.ratio : 0.5;
+        gutter.classList.add("dragging");
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+      });
+    }
+
+    el.btnAi.addEventListener("click", () => {
+      state.aiOpen = !state.aiOpen;
+      el.aiPanel.classList.toggle("open", state.aiOpen);
+      updateStatus();
+    });
+
+    (function bindAiResize() {
+      let startX = 0;
+      let startW = 0;
+      const onMove = (ev) => {
+        const dx = startX - ev.clientX;
+        const w = Math.min(520, Math.max(280, startW + dx));
+        state.aiWidth = w;
+        el.aiPanel.style.setProperty("--ai-width", w + "px");
+        el.aiPanel.style.width = w + "px";
+      };
+      const onUp = () => {
+        el.aiResize.classList.remove("dragging");
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      el.aiResize.addEventListener("pointerdown", (ev) => {
+        ev.preventDefault();
+        startX = ev.clientX;
+        startW = el.aiPanel.getBoundingClientRect().width;
+        el.aiResize.classList.add("dragging");
+        window.addEventListener("pointermove", onMove);
+        window.addEventListener("pointerup", onUp);
+      });
+    })();
+
+    function agentReply(userText) {
+      const tab = activeTab();
+      const pane = activePane(tab);
+      const shell = SHELLS[pane.shellKey];
+      const model = currentAiModel();
+      const effort = currentAiEffort();
+      const lower = userText.toLowerCase();
+      const paneTag = "#" + pane.serial;
+      let body = "";
+      let cmd = null;
+
+      const paneRef = userText.match(/#(\d+)/);
+      let targetPane = pane;
+      if (paneRef) {
+        const found = collectLeaves(tab.layout).find((p) => p.serial === Number(paneRef[1]));
+        if (found) targetPane = found;
+      }
+      const targetShell = SHELLS[targetPane.shellKey];
+      const targetTag = "#" + targetPane.serial;
+
+      if (/端口|port|占用/.test(userText)) {
+        cmd = (targetPane.shellKey === "ps" || targetPane.shellKey === "cmd")
+          ? "Get-NetTCPConnection -State Listen | Select-Object LocalAddress,LocalPort,OwningProcess | Format-Table -AutoSize"
+          : "ss -tulpn | head -n 20";
+        body = `在窗格 <code>${targetTag}</code>（${escapeHtml(targetShell.name)}）下，可用下面命令查看监听端口：`;
+      } else if (/大小|排序|size/.test(userText)) {
+        cmd = (targetPane.shellKey === "ps" || targetPane.shellKey === "cmd")
+          ? "Get-ChildItem | Sort-Object Length -Descending | Format-Table Mode,Length,Name"
+          : "ls -lhS";
+        body = `在窗格 <code>${targetTag}</code> 按文件大小降序列出当前目录：`;
+      } else if (/解释|最后|做了什么|what/.test(userText)) {
+        const last = [...targetPane.cmdHistory].reverse()[0];
+        if (!last) {
+          body = `窗格 <code>${targetTag}</code> 还没有执行过命令。先在该窗格跑一条，我再帮你拆解。`;
+        } else {
+          body = `窗格 <code>${targetTag}</code> 最近执行的是 <code>${escapeHtml(last)}</code>。`;
+          if (/ls|dir|Get-ChildItem/i.test(last)) {
+            body += " 这是在列出当前工作目录中的文件与文件夹，不会修改任何内容。";
+          } else if (/pwd|Get-Location/i.test(last)) {
+            body += " 用于打印当前工作目录路径。";
+          } else {
+            body += " 若需要，我可以把它改写成更安全或更可复用的版本。";
+          }
+        }
+      } else if (/git|提交|commit/.test(lower)) {
+        cmd = "git status";
+        body = `在窗格 <code>${targetTag}</code> 可先检查仓库状态，再决定是否提交：`;
+      } else if (/最小化|最大化|窗口/.test(userText)) {
+        body = "标题栏右侧是窗口控件：最小化后点底部条还原，最大化/窗口化可切换（双击标题栏亦可），关闭后同样点底部条重新打开。设置入口是标题栏齿轮。";
+      } else if (/分屏|窗格|关闭/.test(userText)) {
+        const leaves = collectLeaves(tab.layout);
+        const list = leaves.map((p) => "#" + p.serial).join("、");
+        body = `当前标签共 ${leaves.length} 个窗格：${list}。焦点在 <code>${paneTag}</code>。分屏在<strong>当前焦点窗格内</strong>按 50% 拆分；减少请点各窗格右上角 ×。引用时可以说「在 #2 执行…」。`;
+      } else if (/模型|推理|effort|model/.test(lower)) {
+        body = `当前模型 <code>${escapeHtml(model.label)}</code>，推理强度 <code>${escapeHtml(effort.label)}</code>。可在发送按钮旁的胶囊下拉切换。`;
+      } else {
+        cmd = (targetPane.shellKey === "ps" || targetPane.shellKey === "cmd")
+          ? "Get-Location; Get-ChildItem"
+          : "pwd && ls -la";
+        body = `收到：「${escapeHtml(userText)}」。目标窗格 <code>${targetTag}</code>（${escapeHtml(targetShell.name)} @ <code>${escapeHtml(targetShell.cwd)}</code>），模型 <code>${escapeHtml(model.short)}</code> · 推理 <code>${escapeHtml(effort.short)}</code>。建议先确认环境：`;
+      }
+
+      if (effort.id === "high" || effort.id === "max") {
+        body += ` <em style="color:var(--muted)">（${escapeHtml(effort.short)}强度：会多核对命令副作用与替代写法）</em>`;
+      }
+
+      let html = `<p>${body}</p>`;
+      if (cmd) html += `<pre>${escapeHtml(cmd)}</pre>`;
+      if (effort.id === "max" && cmd) {
+        html += `<p style="margin-top:8px;color:var(--muted);font-size:12px">最高强度补充：执行前可先 <code>echo</code> / dry-run 确认路径与权限，避免误改生产环境。</p>`;
+      }
+      return { html, cmd, paneId: targetPane.id, modelId: model.id, effortId: effort.id };
+    }
+
+    function appendAiMessage(role, html, cmd, paneId, metaInfo) {
+      const msg = document.createElement("div");
+      msg.className = "msg " + role;
+      const bubble = document.createElement("div");
+      bubble.className = "msg-bubble";
+      if (role === "user") bubble.textContent = html;
+      else bubble.innerHTML = html;
+      msg.appendChild(bubble);
+      if (role === "assistant" && cmd) {
+        const actions = document.createElement("div");
+        actions.className = "msg-actions";
+        const run = document.createElement("button");
+        run.className = "chip-btn";
+        run.textContent = "插入并运行";
+        run.addEventListener("click", () => {
+          const tab = activeTab();
+          let pane = paneId ? findLeaf(tab.layout, paneId) : activePane(tab);
+          if (!pane) pane = activePane(tab);
+          setActivePane(tab, pane.id);
+          runCommand(tab, pane, cmd);
+          toast("已在窗格 #" + pane.serial + " 运行");
+        });
+        const insert = document.createElement("button");
+        insert.className = "chip-btn";
+        insert.textContent = "仅插入";
+        insert.addEventListener("click", () => {
+          const tab = activeTab();
+          let pane = paneId ? findLeaf(tab.layout, paneId) : activePane(tab);
+          if (!pane) pane = activePane(tab);
+          setActivePane(tab, pane.id);
+          const input = document.querySelector('.cmd-input[data-pane-id="' + pane.id + '"]');
+          if (input) {
+            input.value = cmd;
+            pane.draft = cmd;
+            input.focus();
+            toast("已插入到窗格 #" + pane.serial);
+          }
+        });
+        actions.appendChild(run);
+        actions.appendChild(insert);
+        msg.appendChild(actions);
+      }
+      el.aiMessages.appendChild(msg);
+      el.aiMessages.scrollTop = el.aiMessages.scrollHeight;
+    }
+
+    function sendAi() {
+      const text = el.aiInput.value.trim();
+      if (!text) return;
+      appendAiMessage("user", text);
+      el.aiInput.value = "";
+      el.aiSend.disabled = true;
+      const effort = currentAiEffort();
+      setTimeout(() => {
+        const reply = agentReply(text);
+        appendAiMessage("assistant", reply.html, reply.cmd, reply.paneId, {
+          modelId: reply.modelId,
+          effortId: reply.effortId
+        });
+        el.aiSend.disabled = false;
+        el.aiInput.focus();
+      }, effort.delay);
+    }
+
+    // Model / effort picker (tree menu next to send)
+    if (el.aiModelTrigger) {
+      el.aiModelTrigger.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const open = !el.aiModelPicker.classList.contains("open");
+        setAiMenuOpen(open);
+      });
+    }
+    if (el.aiModelMenu) {
+      el.aiModelMenu.addEventListener("click", (e) => e.stopPropagation());
+      el.aiModelMenu.querySelectorAll("[data-nav]").forEach((btn) => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          showAiMenuPanel(btn.dataset.nav);
+        });
+      });
+    }
+    if (el.aiResetDefaults) {
+      el.aiResetDefaults.addEventListener("click", (e) => {
+        e.stopPropagation();
+        state.aiModel = "claude-fable-5";
+        state.aiEffort = "medium";
+        syncAiConfigUi();
+        showAiMenuPanel("root");
+        toast("已重置为默认 · Fable 5 中");
+      });
+    }
+    document.addEventListener("click", (e) => {
+      if (!el.aiModelPicker) return;
+      if (!el.aiModelPicker.contains(e.target)) setAiMenuOpen(false);
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") setAiMenuOpen(false);
+    });
+    syncAiConfigUi();
+
+    el.aiSend.addEventListener("click", sendAi);
+    el.aiInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendAi();
+      }
+    });
+    document.querySelectorAll(".suggest").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        el.aiInput.value = btn.dataset.prompt;
+        sendAi();
+      });
+    });
+    document.getElementById("btn-clear").addEventListener("click", () => {
+      const tab = activeTab();
+      clearTerminal(tab, activePane(tab));
+      toast("已清屏焦点窗格");
+    });
+
+    // Seed: multi-tab + nested split demo
+    // Tab 1: #1 | (#2 / #3) — 先左右，再在右侧窗格内上下拆
+    createTab("ps");
+    const first = state.tabs[0];
+    const leaf1 = first.layout;
+    const leaf2 = makePane("ps");
+    first.layout = {
+      type: "split",
+      id: "split-" + state.nextId++,
+      dir: "h",
+      ratio: 0.5,
+      a: leaf1,
+      b: leaf2
+    };
+    const leaf3 = makePane("ps");
+    first.layout = splitLeaf(first.layout, leaf2.id, "v", leaf3);
+    first.activePaneId = leaf1.id;
+    state.activePaneId = leaf1.id;
+    appendLines(leaf2, [
+      { cls: "info", text: "— 窗格 #" + leaf2.serial + " · 在 #1 右侧 50% 拆分 —" }
+    ]);
+    appendLines(leaf3, [
+      { cls: "info", text: "— 窗格 #" + leaf3.serial + " · 在 #" + leaf2.serial + " 内向下 50% 拆分（非全局）—" }
+    ]);
+    createTab("bash");
+    state.activeTabId = first.id;
+    state.activePaneId = leaf1.id;
+    first.activePaneId = leaf1.id;
+    renderAll();
+    el.aiPanel.style.width = state.aiWidth + "px";
+    setWindowState("maximized");
+  </script>
+</body>
+</html>

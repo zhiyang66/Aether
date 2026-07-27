@@ -1,0 +1,15 @@
+{
+  "id": "community.hello",
+  "name": "Hello Extension",
+  "version": "0.1.0",
+  "description": "示例：导入到 设置 → 扩展",
+  "enabled": true,
+  "agentSystemAppend": "用户安装了 Hello 扩展：回答可更简短。",
+  "commands": [
+    {
+      "id": "hello",
+      "label": "扩展: echo hello",
+      "runCommand": "echo hello-from-extension"
+    }
+  ]
+}

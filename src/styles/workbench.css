@@ -1320,7 +1320,7 @@
       border-radius: 10px;
       border: 1px solid var(--border-subtle);
       background: color-mix(in oklch, var(--fg) 4%, transparent);
-      padding: 8px 10px;
+      overflow: hidden;
       margin-bottom: 2px;
     }
     .msg-tool-trace.live {
@@ -1332,25 +1332,41 @@
       font-weight: 600;
       letter-spacing: 0.04em;
       color: var(--muted);
-      margin-bottom: 6px;
+      padding: 7px 10px;
+    }
+    .msg-tool-trace-toggle {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+      text-align: left;
+    }
+    .msg-tool-trace-toggle:hover { color: var(--fg); background: color-mix(in oklch, var(--surface-2) 40%, transparent); }
+    .msg-tool-trace-toggle.static { cursor: default; }
+    .msg-tool-trace-toggle.static:hover { color: var(--muted); background: transparent; }
+    .msg-tool-trace-toggle .msg-thinking-hint { margin-left: auto; }
+    .msg-tool-trace-toggle .msg-thinking-chevron { flex: 0 0 12px; }
+    .msg-tool-trace.live .msg-tool-trace-toggle {
+      color: var(--muted);
     }
     .msg-tool-trace-list {
       list-style: none;
       margin: 0;
-      padding: 0;
+      padding: 0 10px 10px;
       display: flex;
       flex-direction: column;
       gap: 5px;
     }
     .msg-tool-step {
       display: grid;
-      grid-template-columns: minmax(72px, auto) 1fr;
+      grid-template-columns: 18px minmax(0, 1fr) auto;
       gap: 2px 8px;
       font-size: 11.5px;
       line-height: 1.35;
-      padding: 5px 8px;
-      border-radius: 6px;
-      background: color-mix(in oklch, var(--fg) 3%, transparent);
+      padding: 5px 4px 5px 8px;
       border-left: 2px solid var(--border);
     }
     .msg-tool-step.ok {
@@ -1359,30 +1375,51 @@
     .msg-tool-step.fail {
       border-left-color: color-mix(in oklch, var(--danger) 70%, var(--border));
     }
+    .msg-tool-index {
+      grid-column: 1;
+      grid-row: 1 / span 2;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 17px;
+      font-variant-numeric: tabular-nums;
+    }
     .msg-tool-name {
-      font-family: var(--font-mono);
+      grid-column: 2;
+      font-family: var(--font-body);
       font-weight: 600;
       font-size: 11px;
-      color: var(--accent);
-      grid-column: 1;
+      color: color-mix(in oklch, var(--accent) 50%, var(--fg));
     }
-    .msg-tool-args {
+    .msg-tool-state {
+      grid-column: 3;
+      font-size: 10px;
+      color: var(--muted);
+    }
+    .msg-tool-state.ok { color: var(--success); }
+    .msg-tool-state.fail { color: var(--danger); }
+    .msg-tool-detail {
       grid-column: 2;
-      font-family: var(--font-mono);
-      font-size: 10.5px;
+      color: var(--muted);
+      font-size: 10.75px;
       color: var(--muted);
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .msg-tool-sum {
-      grid-column: 1 / -1;
-      color: color-mix(in oklch, var(--fg) 88%, var(--muted));
-      font-size: 11px;
-      overflow: hidden;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
+    .msg-tool-output {
+      grid-column: 2 / -1;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 10.5px;
+    }
+    .msg-tool-output summary { cursor: pointer; width: fit-content; }
+    .msg-tool-output pre {
+      margin: 4px 0 0;
+      max-height: 110px;
+      overflow: auto;
+      white-space: pre-wrap;
+      font: inherit;
+      color: color-mix(in oklch, var(--fg) 82%, var(--muted));
     }
 
     .msg-actions {

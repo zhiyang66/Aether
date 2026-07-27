@@ -1,5 +1,7 @@
 {
-  "version": "1.0.4",
-  "notes": "修复启动闪屏/系统 PowerShell 弹出与多 PTY 卡死：PS 集成避免 -File 被 WT 抢附、扫描进程 CREATE_NO_WINDOW、恢复会话限制标签/窗格数量。",
-  "url": "https://github.com/zhiyang66/Aether/releases/latest"
+  "version": "1.0.5",
+  "notes": "操作轨迹改为清晰的动作时间线，终端字体更易读；思考过程默认开启；更新可在软件内下载并启动安装程序。",
+  "downloadUrl": "https://github.com/zhiyang66/Aether/releases/download/v1.0.5/Aether_1.0.5_x64-setup.exe",
+  "downloadName": "Aether_1.0.5_x64-setup.exe",
+  "url": "https://github.com/zhiyang66/Aether/releases/tag/v1.0.5"
 }

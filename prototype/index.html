@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="refresh" content="0; url=shell-workbench.html" />
+  <title>Shell Workbench · 跨平台终端工作台</title>
+  <script>location.replace("shell-workbench.html");</script>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+      background: oklch(0.16 0.012 250);
+      color: oklch(0.93 0.01 250);
+      -webkit-font-smoothing: antialiased;
+    }
+    .box {
+      text-align: center;
+      padding: 28px 32px;
+      border: 1px solid oklch(0.32 0.015 250);
+      border-radius: 10px;
+      background: oklch(0.20 0.012 250);
+      max-width: 360px;
+    }
+    .box p {
+      margin: 0 0 14px;
+      font-size: 14px;
+      color: oklch(0.65 0.02 250);
+      line-height: 1.5;
+    }
+    .box a {
+      color: oklch(0.72 0.14 195);
+      font-weight: 550;
+      letter-spacing: 0.01em;
+      text-decoration: none;
+    }
+    .box a:hover { text-decoration: underline; }
+    .box a:focus-visible {
+      outline: 2px solid oklch(0.72 0.14 195);
+      outline-offset: 3px;
+      border-radius: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <p>正在打开 Shell Workbench…</p>
+    <a href="shell-workbench.html">进入工作台</a>
+    ·
+    <a href="settings.html">打开设置</a>
+  </div>
+</body>
+</html>

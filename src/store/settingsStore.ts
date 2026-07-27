@@ -77,7 +77,7 @@ export type SettingsState = {
   outputSnapshotLines: number;
   /** URL to version.json for update check; empty = disabled */
   updateFeedUrl: string;
-  /** Show agent thinking / reasoning UI (composer toggle) */
+  /** Show agent thinking / reasoning UI. Always enabled from 1.0.5 onward. */
   showThinking: boolean;
   /** 1.0: inject AETHER.md project context (found upward from pane cwd) */
   projectContext: boolean;
@@ -152,7 +152,7 @@ const defaults = (): Omit<
   outputSnapshotLines: 200,
   /** Empty = use GitHub Releases latest for this project (see updateCheck.DEFAULT_UPDATE_FEED). Set "off" to disable. */
   updateFeedUrl: "",
-  showThinking: false,
+  showThinking: true,
   projectContext: true,
 });
 
@@ -196,7 +196,7 @@ function serializeState(s: SettingsState): SettingsData {
 export function mergeLoadedConfig(
   fileObj: Partial<SettingsState>,
 ): SettingsData {
-  return { ...defaults(), ...fileObj, material: "solid" };
+  return { ...defaults(), ...fileObj, material: "solid", showThinking: true };
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
