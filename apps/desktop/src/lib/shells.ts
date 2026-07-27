@@ -77,8 +77,6 @@ export const SHELLS: Record<ShellKey, ShellDef> = {
   },
 };
 
-export const SHELL_MENU_KEYS: ShellKey[] = ["ps", "bash", "zsh", "cmd"];
-
 export function promptText(shellKey: string, cwd: string): string {
   if (shellKey.startsWith("wsl")) return `user@wsl:~$ `;
   switch (shellKey) {

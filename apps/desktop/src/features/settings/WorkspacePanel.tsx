@@ -5,6 +5,7 @@ import {
   type Workspace,
 } from "../../lib/workspace";
 import { useWorkbenchStore } from "../../store/workbenchStore";
+import { askConfirm, askPrompt } from "../../components/AppDialog";
 
 /** Settings UI for named workspaces (V2). */
 export function WorkspacePanel() {
@@ -35,11 +36,15 @@ export function WorkspacePanel() {
           type="button"
           className="btn primary"
           onClick={() => {
-            const name = window.prompt("工作区名称", "我的项目");
-            if (name?.trim()) {
-              saveWorkspace(name.trim());
-              window.setTimeout(reload, 100);
-            }
+            void askPrompt("保存工作区", {
+              message: "输入工作区名称",
+              defaultValue: "我的项目",
+            }).then((name) => {
+              if (name?.trim()) {
+                saveWorkspace(name.trim());
+                window.setTimeout(reload, 100);
+              }
+            });
           }}
         >
           保存当前为工作区
@@ -81,11 +86,16 @@ export function WorkspacePanel() {
                 type="button"
                 className="btn"
                 onClick={() => {
-                  if (confirm(`删除「${w.name}」？`)) {
-                    deleteWorkspace(w.id);
-                    reload();
-                    toastMsg("已删除");
-                  }
+                  void askConfirm(`删除工作区「${w.name}」？`, {
+                    danger: true,
+                    okLabel: "删除",
+                  }).then((ok) => {
+                    if (ok) {
+                      deleteWorkspace(w.id);
+                      reload();
+                      toastMsg("已删除");
+                    }
+                  });
                 }}
               >
                 删除

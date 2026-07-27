@@ -1,4 +1,6 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
+import { isTauri } from "../lib/window";
 import { defaultShellForPlatform, platformLabel } from "../lib/shells";
 import { getPreset } from "../lib/themes";
 import { loadSnapshotStore, saveSnapshotStore } from "../lib/outputSnapshot";
@@ -19,7 +21,11 @@ export type SettingsState = {
 
   cwd: string;
   startupCmd: string;
-  profiles: { id: string; name: string; path: string; shellKey: string }[];
+  /** OSC 133/7 shell integration at spawn (command blocks) */
+  shellIntegration: boolean;
+  /** Notify when a long command finishes while the window is unfocused */
+  notifyOnLongCommand: boolean;
+  notifyThresholdSec: number;
 
   accentHue: number;
   themePreset: string;
@@ -60,8 +66,12 @@ export type SettingsState = {
   updateFeedUrl: string;
   /** Show agent thinking / reasoning UI (composer toggle) */
   showThinking: boolean;
+  /** 1.0: inject AETHER.md project context (found upward from pane cwd) */
+  projectContext: boolean;
 
   load: () => void;
+  /** Pull authoritative settings from ~/.aether/config.json (desktop only). */
+  loadFromDisk: () => Promise<void>;
   save: () => void;
   patch: (p: Partial<SettingsState>) => void;
   reset: () => void;
@@ -74,6 +84,7 @@ export type SettingsState = {
 const defaults = (): Omit<
   SettingsState,
   | "load"
+  | "loadFromDisk"
   | "save"
   | "patch"
   | "reset"
@@ -89,7 +100,9 @@ const defaults = (): Omit<
   copyWithPrompt: false,
   cwd: "",
   startupCmd: "",
-  profiles: [],
+  shellIntegration: true,
+  notifyOnLongCommand: true,
+  notifyThresholdSec: 15,
   accentHue: 195,
   themePreset: "cyan",
   material: "solid" as const,
@@ -124,9 +137,51 @@ const defaults = (): Omit<
   outputSnapshotLines: 200,
   updateFeedUrl: "",
   showThinking: false,
+  projectContext: true,
 });
 
 const STORAGE_KEY = "sw-settings-v1";
+
+/** Method keys that must never be persisted. */
+type SettingsData = Omit<
+  SettingsState,
+  | "load"
+  | "loadFromDisk"
+  | "save"
+  | "patch"
+  | "reset"
+  | "applyAccent"
+  | "applyPreset"
+  | "previewOpacity"
+>;
+
+/** Strip store methods → the plain, persistable settings object. */
+function serializeState(s: SettingsState): SettingsData {
+  const {
+    load: _l,
+    loadFromDisk: _lfd,
+    save: _s,
+    patch: _p,
+    reset: _r,
+    applyAccent: _a,
+    applyPreset: _ap,
+    previewOpacity: _po,
+    ...data
+  } = s;
+  return { ...data, material: "solid" };
+}
+
+/**
+ * Merge a loaded config object over defaults — file values win, unknown/missing
+ * fields fall back to defaults, and material is always forced solid (the UI no
+ * longer exposes mica/acrylic). Pure; used for both localStorage and the
+ * authoritative ~/.aether/config.json.
+ */
+export function mergeLoadedConfig(
+  fileObj: Partial<SettingsState>,
+): SettingsData {
+  return { ...defaults(), ...fileObj, material: "solid" };
+}
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   ...defaults(),
@@ -136,12 +191,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<SettingsState>;
-        // Force solid material (UI no longer exposes mica/acrylic)
-        set({
-          ...defaults(),
-          ...parsed,
-          material: "solid",
-        });
+        set(mergeLoadedConfig(parsed));
       }
     } catch {
       /* ignore */
@@ -149,20 +199,46 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     get().applyAccent();
   },
 
+  /**
+   * ~/.aether/config.json is the authoritative settings source. On the desktop:
+   * if the file exists, it wins over localStorage (mirrored back for parity); if
+   * it does not (first run / unreadable), seed it from the current settings.
+   * No-op in a browser (localStorage only).
+   */
+  loadFromDisk: async () => {
+    if (!isTauri()) return;
+    let raw: string | null = null;
+    try {
+      raw = await invoke<string | null>("aether_config_read");
+    } catch {
+      return;
+    }
+    if (raw) {
+      try {
+        const fileObj = JSON.parse(raw) as Partial<SettingsState>;
+        set(mergeLoadedConfig(fileObj));
+        // Mirror into localStorage so export / offline load stay in parity.
+        localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify(serializeState(get())),
+        );
+        get().applyAccent();
+        return;
+      } catch {
+        /* unparseable → fall through and re-seed */
+      }
+    }
+    get().save(); // seed config.json from current state
+  },
+
   save: () => {
-    const s = get();
-    const {
-      load: _l,
-      save: _s,
-      patch: _p,
-      reset: _r,
-      applyAccent: _a,
-      applyPreset: _ap,
-      previewOpacity: _po,
-      ...data
-    } = s as SettingsState & { previewOpacity?: unknown };
-    data.material = "solid";
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    const json = JSON.stringify(serializeState(get()));
+    localStorage.setItem(STORAGE_KEY, json);
+    if (isTauri()) {
+      void invoke("aether_config_write", { contents: json }).catch(() => {
+        /* localStorage is the fallback; ignore disk write failures */
+      });
+    }
     get().applyAccent();
   },
 
@@ -230,3 +306,22 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 }));
 
 export { platformLabel };
+
+/** Fields that must never leave the machine in an exported settings file. */
+const SECRET_SETTING_KEYS = ["aiApiKey"] as const;
+
+/**
+ * Serialize persisted settings for export with all secret fields removed.
+ * Both the Settings page and the command palette export through this so a
+ * shared settings JSON can never leak the API key.
+ */
+export function exportSettingsJson(): string {
+  let obj: Record<string, unknown> = {};
+  try {
+    obj = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");
+  } catch {
+    obj = {};
+  }
+  for (const k of SECRET_SETTING_KEYS) delete obj[k];
+  return JSON.stringify(obj, null, 2);
+}

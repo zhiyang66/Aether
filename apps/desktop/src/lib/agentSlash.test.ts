@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { matchSlashCommands, slashEnterShouldAccept } from "./agentSlash";
 
 describe("agentSlash", () => {
-  it("only exposes arg-taking commands", () => {
+  it("exposes composer commands", () => {
     const all = matchSlashCommands("/");
-    expect(all.map((c) => c.cmd).sort()).toEqual(["/focus", "/task"]);
+    expect(all.map((c) => c.cmd).sort()).toEqual(["/focus", "/stop", "/task"]);
   });
 
   it("filters by prefix", () => {

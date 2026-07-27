@@ -32,6 +32,58 @@
   outline: none;
 }
 
+.cmd-palette-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px 0;
+}
+
+.cmd-palette-tab {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cmd-palette-tab:hover {
+  color: var(--fg);
+  background: var(--surface-2);
+}
+
+.cmd-palette-tab.active {
+  color: var(--fg);
+  box-shadow: inset 0 -2px 0 var(--accent, #4ea1ff);
+}
+
+.cmd-tab-count {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 6px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.cmd-tab-hint {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
 .cmd-palette-list {
   max-height: 320px;
   overflow: auto;
@@ -78,9 +130,10 @@
   font-size: 13px;
 }
 
-/* Mock terminal font size from settings */
+/* Mock terminal font size + family from settings */
 .pane-body {
   font-size: var(--term-font-size, 13px);
+  font-family: var(--term-font-family, var(--font-mono));
 }
 
 /* Welcome strip in empty agent */
@@ -242,12 +295,15 @@
 
 /* Agent task panel */
 .task-panel {
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  max-height: 42%;
+  /* Hosted inside .ai-float-card — fill the float, no layout push-down */
+  border: none;
+  background: transparent;
+  max-height: none;
+  height: 100%;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  flex: 1;
 }
 
 .task-panel-head {
@@ -481,4 +537,377 @@
   height: 1px;
   margin: 4px 6px;
   background: var(--border);
+}
+
+/* ── In-app dialog (askConfirm / askPrompt) — native dialogs freeze the WebView ── */
+.app-dialog-backdrop {
+  z-index: 260;
+  place-items: center;
+  padding-top: 0;
+}
+
+/* Agent tool approval: fill only the Agent panel, not the whole window */
+.app-dialog-backdrop-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: oklch(0 0 0 / 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+.app-dialog {
+  width: min(420px, calc(100vw - 48px));
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-panel);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.app-dialog-panel {
+  width: 100%;
+  max-width: 100%;
+  max-height: calc(100% - 8px);
+  overflow: auto;
+  box-sizing: border-box;
+}
+
+.app-dialog-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.app-dialog-message {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg-dim, var(--fg));
+  opacity: 0.85;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.app-dialog-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+  outline: none;
+}
+
+.app-dialog-input:focus {
+  border-color: var(--accent);
+}
+
+.app-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.app-dialog-btn {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+
+.app-dialog-btn:hover {
+  background: var(--surface-2);
+}
+
+.app-dialog-btn.primary {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.app-dialog-btn.primary.danger {
+  background: oklch(0.4 0.13 25 / 0.5);
+  border-color: oklch(0.62 0.18 25);
+}
+
+/* ---- Terminal buffer search (Ctrl+Shift+F) ---- */
+.term-search-bar {
+  position: absolute;
+  top: 6px;
+  right: 12px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-1, var(--panel-bg, #1b1e24));
+  box-shadow: 0 4px 16px rgb(0 0 0 / 35%);
+}
+
+.term-search-input {
+  width: 180px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 8px;
+  outline: none;
+}
+
+.term-search-input:focus {
+  border-color: var(--accent);
+}
+
+.term-search-btn {
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+.term-search-btn:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+/* ---- Command blocks (OSC 133) ---- */
+.term-block-fail {
+  width: 3px !important;
+  height: 100%;
+  border-radius: 2px;
+  background: oklch(0.62 0.18 25);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.pane-blocks-pop {
+  position: absolute;
+  top: 30px;
+  right: 8px;
+  z-index: 40;
+  width: min(420px, calc(100% - 16px));
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-1, var(--panel-bg, #1b1e24));
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+  padding: 6px;
+}
+
+.pane-blocks-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 4px 8px 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pane-blocks-empty {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 8px;
+}
+
+.pane-block-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.pane-block-item:hover {
+  background: var(--surface-2);
+}
+
+.pane-block-status {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: oklch(0.7 0.15 150);
+}
+
+.pane-block-status.fail {
+  background: oklch(0.62 0.18 25);
+}
+
+.pane-block-status.running {
+  background: var(--accent);
+  animation: blockPulse 1.2s ease-in-out infinite;
+}
+
+@keyframes blockPulse {
+  50% { opacity: 0.35; }
+}
+
+.pane-block-cmd {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--term-font-family, var(--font-mono));
+}
+
+.pane-block-meta {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.pane-block-actions {
+  display: none;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.pane-block-item:hover .pane-block-actions {
+  display: inline-flex;
+}
+
+.pane-block-act {
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 5px;
+  cursor: pointer;
+}
+
+.pane-block-act:hover {
+  background: var(--surface-3, rgb(255 255 255 / 8%));
+  color: var(--fg);
+}
+
+/* ---- Approval dialog (1.0) ---- */
+.app-dialog-detail {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgb(0 0 0 / 25%);
+  color: var(--fg);
+  font-family: var(--term-font-family, var(--font-mono));
+  font-size: 12px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.app-dialog-detail.danger {
+  border-color: oklch(0.62 0.18 25);
+  background: oklch(0.4 0.13 25 / 0.18);
+}
+
+/* ---- Inline Ctrl+K (1.0) ---- */
+.inline-k {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 32;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--surface-1, var(--panel-bg, #1b1e24));
+  box-shadow: 0 6px 20px rgb(0 0 0 / 45%);
+}
+
+.inline-k-icon {
+  flex: 0 0 auto;
+  font-size: 13px;
+}
+
+.inline-k-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--term-font-family, var(--font-mono));
+  font-size: 13px;
+  outline: none;
+}
+
+.inline-k-input.danger {
+  color: oklch(0.72 0.15 25);
+}
+
+.inline-k-busy,
+.inline-k-danger-note {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.inline-k-danger-note {
+  color: oklch(0.72 0.15 25);
+}
+
+/* ---- Cast player (1.0 会话回放) ---- */
+.cast-player {
+  width: min(920px, calc(100vw - 48px));
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-1, var(--panel-bg, #14171c));
+  box-shadow: 0 12px 40px rgb(0 0 0 / 55%);
+}
+
+.cast-player-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.cast-player-term {
+  min-height: 320px;
+  max-height: 60vh;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #101318;
+  padding: 6px;
+}
+
+.cast-player-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }

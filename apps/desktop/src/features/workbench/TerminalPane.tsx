@@ -9,8 +9,16 @@ import {
   recordCommand,
 } from "../../lib/commandHistory";
 import { isTauri } from "../../lib/window";
+import { escapeHtml } from "../../lib/sanitize";
 import { getLiveTerm } from "../terminal/termRegistry";
 import { XtermHost } from "../terminal/XtermHost";
+import {
+  formatDuration,
+  getBlocks,
+  onBlocksChanged,
+  readBlockOutput,
+  type CommandBlock,
+} from "../../lib/commandBlocks";
 
 function LeafView({
   pane,
@@ -28,12 +36,15 @@ function LeafView({
   const runCommand = useWorkbenchStore((s) => s.runCommand);
   const clearPane = useWorkbenchStore((s) => s.clearPane);
   const useMock = useWorkbenchStore((s) => s.useMockTerminal);
+  const broadcastOn = useWorkbenchStore((s) => s.broadcastPanes.includes(pane.id));
   const settings = useSettingsStore();
   const bodyRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [suggestIdx, setSuggestIdx] = useState(0);
   const [showSuggest, setShowSuggest] = useState(false);
   const [histOpen, setHistOpen] = useState(false);
+  const [blocksOpen, setBlocksOpen] = useState(false);
+  const [blocksVersion, setBlocksVersion] = useState(0);
   const [ptyId, setPtyId] = useState<string | null>(null);
   // Prefer real PTY whenever Tauri is present. useMock may be stuck true if the
   // store module evaluated before __TAURI_INTERNALS__ was injected.
@@ -68,6 +79,82 @@ function LeafView({
     setSuggestIdx(0);
     setShowSuggest(suggestions.length > 0);
   }, [suggestions]);
+
+  // Re-render blocks dropdown when OSC 133 marks land for this pane
+  useEffect(() => {
+    if (!realTerm) return;
+    return onBlocksChanged((pid) => {
+      if (pid === pane.id) setBlocksVersion((v) => v + 1);
+    });
+  }, [pane.id, realTerm]);
+
+  const blocks = useMemo(
+    () => (realTerm ? [...getBlocks(pane.id)].reverse() : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pane.id, realTerm, blocksVersion, blocksOpen],
+  );
+
+  const copyText = (text: string, okMsg: string) => {
+    void navigator.clipboard?.writeText(text).then(
+      () => useWorkbenchStore.getState().toastMsg(okMsg),
+      () => useWorkbenchStore.getState().toastMsg("复制失败"),
+    );
+  };
+
+  const blockActions = {
+    jump: (b: CommandBlock) => {
+      const live = getLiveTerm(pane.id);
+      if (!live || !b.marker || b.marker.isDisposed) {
+        useWorkbenchStore.getState().toastMsg("该块已被清屏或滚出缓冲区");
+        return;
+      }
+      live.term.scrollToLine(b.marker.line);
+      setBlocksOpen(false);
+    },
+    copyCmd: (b: CommandBlock) => {
+      if (!b.command) return;
+      copyText(b.command, "已复制命令");
+    },
+    copyOut: (b: CommandBlock) => {
+      const live = getLiveTerm(pane.id);
+      const out = live ? readBlockOutput(live.term, b) : null;
+      if (out == null) {
+        useWorkbenchStore.getState().toastMsg("输出已不在缓冲区");
+        return;
+      }
+      // B1: honor copyWithPrompt — strip the command/prompt line unless enabled
+      const text = settings.copyWithPrompt
+        ? out
+        : out
+            .split("\n")
+            .filter((ln, i) => !(i === 0 && b.command && ln.includes(b.command)))
+            .join("\n");
+      copyText(text, "已复制输出");
+    },
+    rerun: (b: CommandBlock) => {
+      if (!b.command) return;
+      const live = getLiveTerm(pane.id);
+      if (live?.ptyId) {
+        live.blocks?.noteSubmittedCommand(b.command);
+        void import("../../ipc/pty").then(({ ptyWrite }) => {
+          void ptyWrite(live.ptyId!, `${b.command}\r`);
+        });
+        setBlocksOpen(false);
+      }
+    },
+    diagnose: (b: CommandBlock) => {
+      // AiPanel is unmounted while closed — open it first, then dispatch
+      useWorkbenchStore.getState().setAiOpen(true);
+      window.setTimeout(() => {
+        window.dispatchEvent(
+          new CustomEvent("sw:ai-diagnose", {
+            detail: { paneId: pane.id, blockId: b.id },
+          }),
+        );
+      }, 60);
+      setBlocksOpen(false);
+    },
+  };
 
   useEffect(() => {
     if (bodyRef.current && !realTerm) {
@@ -150,7 +237,7 @@ function LeafView({
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
               minWidth: 0,
-              fontFamily: "var(--font-mono)",
+              fontFamily: "var(--term-font-family, var(--font-mono))",
               fontSize: 11,
             }}
           >
@@ -158,6 +245,75 @@ function LeafView({
           </span>
         </span>
         <span className="ph-right">
+          {realTerm && (
+            <button
+              className="pane-icon-btn"
+              type="button"
+              title={
+                broadcastOn
+                  ? "退出广播（当前键入会同步到所有广播窗格）"
+                  : "加入广播输入（选 2 个以上窗格后键入同步）"
+              }
+              aria-label="广播输入"
+              aria-pressed={broadcastOn}
+              style={
+                broadcastOn
+                  ? { color: "var(--accent)", background: "var(--accent-dim)" }
+                  : undefined
+              }
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                useWorkbenchStore.getState().toggleBroadcastPane(pane.id);
+                const n = useWorkbenchStore.getState().broadcastPanes.length;
+                useWorkbenchStore
+                  .getState()
+                  .toastMsg(
+                    broadcastOn
+                      ? `#${pane.serial} 已退出广播（剩 ${n} 个）`
+                      : n >= 2
+                        ? `广播已生效 · ${n} 个窗格同步键入`
+                        : `#${pane.serial} 已加入广播 · 再选至少 1 个窗格`,
+                  );
+              }}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                <path
+                  d="M4 10v4h4l6 5V5l-6 5H4z"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M17 9a4.5 4.5 0 0 1 0 6"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+          )}
+          {realTerm && (
+            <button
+              className="pane-icon-btn"
+              type="button"
+              title="命令块（Ctrl+Alt+↑/↓ 跳转）"
+              aria-label="命令块列表"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setBlocksOpen((v) => !v);
+                setHistOpen(false);
+              }}
+            >
+              <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                <rect x="4" y="4" width="16" height="6" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+                <rect x="4" y="14" width="16" height="6" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.6" />
+              </svg>
+            </button>
+          )}
           <button
             className="pane-icon-btn"
             type="button"
@@ -167,6 +323,7 @@ function LeafView({
               e.preventDefault();
               e.stopPropagation();
               setHistOpen((v) => !v);
+              setBlocksOpen(false);
               setShowSuggest(false);
             }}
           >
@@ -233,6 +390,97 @@ function LeafView({
           </button>
         </span>
       </div>
+      {blocksOpen && (
+        <div className="pane-blocks-pop" onMouseDown={(e) => e.stopPropagation()}>
+          <div className="pane-blocks-title">
+            命令块
+            <span style={{ fontWeight: 400 }}>
+              {blocks.length ? `${blocks.length} 条` : ""}
+            </span>
+          </div>
+          {blocks.length === 0 && (
+            <div className="pane-blocks-empty">
+              暂无命令块。需要 Shell 集成（设置 → 终端）且 Shell 支持
+              pwsh/bash/zsh。
+            </div>
+          )}
+          {blocks.map((b) => (
+            <div
+              key={b.id}
+              className="pane-block-item"
+              role="button"
+              tabIndex={0}
+              onClick={() => blockActions.jump(b)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") blockActions.jump(b);
+              }}
+              title={b.command || "（未捕获命令）"}
+            >
+              <span
+                className={`pane-block-status${
+                  b.running ? " running" : b.exitCode ? " fail" : ""
+                }`}
+              />
+              <span className="pane-block-cmd">
+                {b.command || "（未捕获命令）"}
+              </span>
+              <span className="pane-block-meta">
+                {b.running
+                  ? "运行中"
+                  : `exit ${b.exitCode ?? "?"} · ${formatDuration((b.endedAt ?? b.startedAt) - b.startedAt)}`}
+              </span>
+              <span className="pane-block-actions">
+                <button
+                  type="button"
+                  className="pane-block-act"
+                  title="复制命令"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    blockActions.copyCmd(b);
+                  }}
+                >
+                  命令
+                </button>
+                <button
+                  type="button"
+                  className="pane-block-act"
+                  title="复制输出"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    blockActions.copyOut(b);
+                  }}
+                >
+                  输出
+                </button>
+                <button
+                  type="button"
+                  className="pane-block-act"
+                  title="重新运行"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    blockActions.rerun(b);
+                  }}
+                >
+                  重跑
+                </button>
+                {!b.running && b.exitCode !== 0 && b.exitCode != null && (
+                  <button
+                    type="button"
+                    className="pane-block-act"
+                    title="让 Agent 诊断这次失败"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      blockActions.diagnose(b);
+                    }}
+                  >
+                    AI 诊断
+                  </button>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {histOpen && (
         <div
           className="pane-hist-pop"
@@ -415,12 +663,14 @@ function LeafView({
 }
 
 function formatPrompt(pane: LeafPane): string {
-  // match prototype colored segments roughly
+  // match prototype colored segments roughly. cwd is derived from untrusted
+  // OSC 7 / OSC 9;9 terminal output → escape before interpolating into HTML.
+  const cwd = escapeHtml(pane.cwd);
   if (pane.shellKey === "ps") {
-    return `<span class="prompt-path">PS ${pane.cwd}</span><span class="prompt-sep">&gt; </span>`;
+    return `<span class="prompt-path">PS ${cwd}</span><span class="prompt-sep">&gt; </span>`;
   }
   if (pane.shellKey === "cmd") {
-    return `<span class="prompt-path">${pane.cwd}</span><span class="prompt-sep">&gt;</span>`;
+    return `<span class="prompt-path">${cwd}</span><span class="prompt-sep">&gt;</span>`;
   }
   if (pane.shellKey === "zsh") {
     return `<span class="prompt-path">dev@mac</span><span class="prompt-sep"> </span><span style="color:oklch(0.72 0.1 250)">~</span><span class="prompt-sep"> % </span>`;

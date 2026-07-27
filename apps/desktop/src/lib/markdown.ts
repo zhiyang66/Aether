@@ -3,13 +3,7 @@
  * Handles: paragraphs, bold, italic, inline code, fenced code, lists, links, headings.
  */
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+import { escapeHtml, sanitizeAgentHtml } from "./sanitize";
 
 function inlineFormat(s: string): string {
   let t = escapeHtml(s);
@@ -31,9 +25,9 @@ function inlineFormat(s: string): string {
 /** Convert markdown-ish text to HTML for chat bubbles. */
 export function markdownToHtml(src: string): string {
   if (!src?.trim()) return "";
-  // If already looks like our sanitized HTML from earlier path, return as-is lightly
+  // Looks like HTML already — sanitize instead of trusting it (model output!)
   if (/^\s*<(p|pre|ul|ol|h[1-3])[\s>]/i.test(src) && !src.includes("```")) {
-    return src;
+    return sanitizeAgentHtml(src);
   }
 
   const lines = src.replace(/\r\n/g, "\n").split("\n");

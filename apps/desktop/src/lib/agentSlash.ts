@@ -27,6 +27,13 @@ export const AGENT_SLASH_COMMANDS: AgentSlashCommand[] = [
     desc: "聚焦窗格 · 例 /focus 2",
     run: "draft",
   },
+  {
+    cmd: "/stop",
+    insert: "/stop",
+    label: "/stop",
+    desc: "停止当前生成（同停止按钮）",
+    run: "draft",
+  },
 ];
 
 export function matchSlashCommands(input: string): AgentSlashCommand[] {

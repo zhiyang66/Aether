@@ -9,6 +9,8 @@ export async function ptyCreate(opts: {
   rows?: number;
   path?: string;
   args?: string[];
+  /** OSC 133/7 shell integration at spawn (default true on backend) */
+  integration?: boolean;
 }): Promise<string> {
   if (!isTauri()) throw new Error("not in tauri");
   return invoke<string>("pty_create", {
@@ -19,6 +21,7 @@ export async function ptyCreate(opts: {
       rows: opts.rows,
       path: opts.path,
       args: opts.args,
+      integration: opts.integration,
     },
   });
 }

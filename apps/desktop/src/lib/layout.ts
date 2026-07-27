@@ -130,6 +130,15 @@ export function splitLeaf(
 
 /** Resolve banner/cwd metadata for scanned keys like wsl:Ubuntu-24.04 */
 export function shellMeta(shellKey: string) {
+  if (shellKey.startsWith("ssh")) {
+    const host = shellKey.startsWith("ssh:") ? shellKey.slice(4) : "远程主机";
+    return {
+      name: `SSH · ${host}`,
+      short: "SSH",
+      defaultCwd: "~",
+      banner: [`SSH · ${host} · Aether`, "远程主机会话"],
+    };
+  }
   if (shellKey.startsWith("wsl")) {
     return {
       name: shellKey.startsWith("wsl:") ? `WSL · ${shellKey.slice(4)}` : SHELLS.wsl.name,

@@ -45,13 +45,16 @@
         transform 0.18s,
         box-shadow 0.22s;
     }
+    /* Fill the OS window edge-to-edge (no transparent inset / rounded corners /
+       drop-shadow). The borderless+transparent Tauri window otherwise showed
+       the desktop through the 16px inset and rounded corners. */
     .app.windowed {
-      width: min(1240px, calc(100vw - 32px));
-      height: min(780px, calc(100vh - 32px));
-      margin: 16px auto;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      box-shadow: var(--shadow-panel), 0 0 0 1px oklch(1 0 0 / 0.03);
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      border: none;
+      border-radius: 0;
+      box-shadow: none;
     }
     .app.minimized {
       opacity: 0;
@@ -209,7 +212,7 @@
       flex-shrink: 0;
     }
 
-    /* Windows caption buttons */
+    /* Windows / Linux caption buttons (right) */
     .win-controls {
       display: flex;
       align-items: stretch;
@@ -251,6 +254,69 @@
     .win-btn .max-icon.restore { display: none; }
     .app:not(.windowed) .win-btn .max-icon.normal { display: none; }
     .app:not(.windowed) .win-btn .max-icon.restore { display: block; }
+
+    /* macOS traffic lights (left) — custom decorations=false chrome */
+    .titlebar.is-mac {
+      padding-left: 0;
+    }
+    .win-controls.mac-traffic {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 100%;
+      margin: 0;
+      padding: 0 12px 0 14px;
+      flex-shrink: 0;
+    }
+    .traffic-btn {
+      width: 12px;
+      height: 12px;
+      min-width: 12px;
+      min-height: 12px;
+      padding: 0;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      position: relative;
+      display: grid;
+      place-items: center;
+      box-shadow: inset 0 0 0 0.5px oklch(0 0 0 / 0.18);
+      transition: filter 0.12s, transform 0.08s;
+    }
+    .traffic-btn.close { background: #ff5f57; }
+    .traffic-btn.min { background: #febc2e; }
+    .traffic-btn.zoom { background: #28c840; }
+    .traffic-btn:hover { filter: brightness(1.05); }
+    .traffic-btn:active { transform: scale(0.92); }
+    .traffic-btn:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .traffic-glyph {
+      display: grid;
+      place-items: center;
+      width: 100%;
+      height: 100%;
+      opacity: 0;
+      transition: opacity 0.1s;
+    }
+    .win-controls.mac-traffic:hover .traffic-glyph,
+    .win-controls.mac-traffic:focus-within .traffic-glyph {
+      opacity: 0.85;
+    }
+    .traffic-glyph svg {
+      width: 8px;
+      height: 8px;
+      stroke: oklch(0.18 0 0 / 0.72);
+      fill: none;
+      stroke-width: 1.4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .titlebar-mac-spacer {
+      width: 78px; /* roughly traffic lights + padding, balances the left cluster */
+      flex-shrink: 0;
+    }
 
     /* Settings gear in titlebar */
     .titlebar-settings {
@@ -490,13 +556,13 @@
       margin-left: 4px;
     }
 
-    /* Terminal panes — same translucent fill as titlebar/chrome (not a black slab). */
+    /* Terminal panes — preset terminal background (translucent per UI opacity). */
     .panes {
       flex: 1;
       display: flex;
       min-height: 0;
       min-width: 0;
-      background: var(--bg);
+      background: var(--term-bg, var(--bg));
     }
     .split-group {
       flex: 1 1 0;
@@ -783,7 +849,9 @@
       display: none;
       flex-direction: column;
       flex-shrink: 0;
+      /* Hosts in-panel approval dialog (absolute overlay) */
       position: relative;
+      overflow: hidden;
     }
     .ai-panel.open { display: flex; }
     .ai-resize {
@@ -799,6 +867,118 @@
     .ai-resize:hover, .ai-resize.dragging {
       background: color-mix(in oklch, var(--accent) 50%, transparent);
     }
+    /* In-panel floats: tasks / history — dim the agent body so the card lifts off */
+    .ai-float-scrim {
+      position: absolute;
+      inset: 0;
+      top: 42px; /* below header */
+      z-index: 28;
+      /* Stronger dim + slight blur so messages/composer clearly recede */
+      background: color-mix(in oklch, var(--bg) 35%, oklch(0 0 0 / 0.62));
+      backdrop-filter: blur(3px) saturate(0.85);
+      -webkit-backdrop-filter: blur(3px) saturate(0.85);
+      cursor: pointer;
+    }
+    .ai-float-card {
+      position: absolute;
+      left: 10px;
+      right: 10px;
+      top: 50px;
+      z-index: 30;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      /* Solid elevated surface — not transparent over the scrim */
+      background: var(--surface, var(--popover, var(--bg)));
+      border: 1px solid color-mix(in oklch, var(--border) 70%, var(--fg) 30%);
+      border-radius: 12px;
+      box-shadow:
+        0 0 0 1px oklch(0 0 0 / 0.12),
+        0 18px 48px oklch(0 0 0 / 0.45),
+        0 4px 12px oklch(0 0 0 / 0.25);
+      overflow: hidden;
+    }
+    .ai-float-tasks {
+      height: min(420px, calc(100% - 64px));
+      max-height: calc(100% - 64px);
+    }
+    .ai-float-history {
+      height: min(320px, calc(100% - 64px));
+      max-height: calc(100% - 64px);
+    }
+    .ai-float-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+    .ai-float-body {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      flex: 1;
+      padding: 8px;
+      overflow: hidden;
+    }
+    .ai-float-search {
+      width: 100%;
+      box-sizing: border-box;
+      margin-bottom: 8px;
+      padding: 7px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--fg);
+      font: inherit;
+      font-size: 12px;
+      outline: none;
+      flex-shrink: 0;
+    }
+    .ai-float-search:focus {
+      border-color: var(--accent);
+    }
+    .ai-float-list {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+    }
+    .ai-float-empty {
+      color: var(--muted);
+      font-size: 12px;
+      padding: 12px 8px;
+    }
+    .ai-float-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .ai-float-item:hover {
+      background: var(--surface-2, color-mix(in oklch, var(--fg) 6%, transparent));
+    }
+    .ai-float-item.active {
+      background: color-mix(in oklch, var(--accent) 14%, transparent);
+    }
+    .ai-float-item-title {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ai-float-item-meta {
+      flex-shrink: 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
     .ai-header {
       height: 42px;
       display: flex;
@@ -958,6 +1138,30 @@
     .msg-stream-live {
       white-space: pre-wrap;
       line-height: 1.65;
+    }
+
+    /* Live markdown while streaming — same rules as finished bubbles */
+    .msg-stream-live.md {
+      white-space: normal;
+    }
+    .msg-stream-live.md > :first-child {
+      margin-top: 0;
+    }
+    .msg-stream-live.md > :last-child {
+      margin-bottom: 0;
+    }
+    .msg-bubble-stream .msg-stream-live.md::after {
+      content: "▋";
+      display: inline;
+      margin-left: 2px;
+      color: var(--accent, var(--fg));
+      animation: aether-caret 1s steps(1) infinite;
+      font-weight: 400;
+    }
+    @keyframes aether-caret {
+      50% {
+        opacity: 0;
+      }
     }
 
     /* Thinking: separate collapsible block — not mixed into answer bubble */

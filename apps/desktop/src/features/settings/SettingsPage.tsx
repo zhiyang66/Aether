@@ -2,38 +2,55 @@ import { Link, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { WinControls } from "../../components/WinControls";
 import { Toast } from "../../components/Toast";
-import { useSettingsStore, platformLabel } from "../../store/settingsStore";
+import { useSettingsStore, platformLabel, exportSettingsJson } from "../../store/settingsStore";
 import { useWorkbenchStore } from "../../store/workbenchStore";
 import { useShellCatalogStore } from "../../store/shellCatalogStore";
 import { clearHistory } from "../../lib/commandHistory";
 import { isTauri, winToggleMaximize } from "../../lib/window";
+import { isMacOS } from "../../lib/platform";
 import { THEME_PRESETS } from "../../lib/themes";
 import { WorkspacePanel } from "./WorkspacePanel";
-import { ExtensionsPanel } from "./ExtensionsPanel";
+import { SnippetsPanel } from "./SnippetsPanel";
+import { ApprovalPanel } from "./ApprovalPanel";
+import { McpPanel } from "./McpPanel";
+import { HostsPanel } from "./HostsPanel";
+import { SkillsPanel } from "./SkillsPanel";
 import { checkForUpdate } from "../../lib/updateCheck";
+import { askConfirm } from "../../components/AppDialog";
 import logoUrl from "../../assets/logo.png";
 import "../../styles/settings.css";
 import "../../styles/product.css";
 
+/** Build-time version from package.json; fallback for test runners without the define. */
+const APP_VERSION = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "0.0.0-dev";
+
 type PanelId =
   | "general"
   | "shells"
+  | "hosts"
   | "appearance"
   | "workspaces"
   | "ai"
-  | "extensions"
+  | "approval"
+  | "mcp"
+  | "skills"
   | "completion"
+  | "snippets"
   | "shortcuts"
   | "about";
 
 const NAV: { id: PanelId; label: string; group: string }[] = [
   { id: "general", label: "常规", group: "应用" },
   { id: "shells", label: "Shell 配置", group: "应用" },
+  { id: "hosts", label: "SSH 主机", group: "应用" },
   { id: "appearance", label: "外观", group: "应用" },
   { id: "workspaces", label: "工作区", group: "应用" },
   { id: "ai", label: "Agent", group: "智能" },
-  { id: "extensions", label: "扩展", group: "智能" },
+  { id: "approval", label: "审批", group: "智能" },
+  { id: "mcp", label: "MCP", group: "智能" },
+  { id: "skills", label: "Skill", group: "智能" },
   { id: "completion", label: "命令联想", group: "输入" },
+  { id: "snippets", label: "命令片段", group: "输入" },
   { id: "shortcuts", label: "快捷键", group: "系统" },
   { id: "about", label: "关于", group: "系统" },
 ];
@@ -108,18 +125,21 @@ export function SettingsPage() {
     }
   };
 
+  const mac = isMacOS();
+
   return (
     <div className={`app${maximized ? " maximized" : " windowed"}`} id="app">
       <header
-        className="titlebar"
+        className={`titlebar${mac ? " is-mac" : " is-win"}`}
         data-tauri-drag-region
         onDoubleClick={async (e) => {
-          if ((e.target as HTMLElement).closest(".win-btn, a, button")) return;
+          if ((e.target as HTMLElement).closest(".win-btn, .traffic-btn, a, button")) return;
           const next = await winToggleMaximize();
           if (typeof next === "boolean") setMaximized(next);
           else setMaximized(!maximized);
         }}
       >
+        {mac && <WinControls placement="left" />}
         <div className="titlebar-left" data-tauri-drag-region>
           <div className="app-icon" aria-hidden="true">
             <img src={logoUrl} alt="" draggable={false} />
@@ -133,7 +153,8 @@ export function SettingsPage() {
             返回工作台
           </Link>
         </div>
-        <WinControls />
+        {!mac && <WinControls placement="right" />}
+        {mac && <div className="titlebar-mac-spacer" aria-hidden="true" />}
       </header>
 
       <div className="body">
@@ -244,7 +265,7 @@ export function SettingsPage() {
                       onChange={(v) => s.patch({ confirmMultiTabClose: v })}
                     />
                   </Row>
-                  <Row label="复制时包含提示符" desc="选中终端文本是否带 prompt">
+                  <Row label="复制命令块输出时包含命令行" desc="点命令块「复制输出」时是否保留首行命令">
                     <Switch checked={s.copyWithPrompt} onChange={(v) => s.patch({ copyWithPrompt: v })} />
                   </Row>
                 </div>
@@ -328,6 +349,56 @@ export function SettingsPage() {
                   </Row>
                 </div>
               </div>
+              <div className="section">
+                <div className="section-title">命令块（Shell 集成）</div>
+                <div className="card">
+                  <Row
+                    label="Shell 集成"
+                    desc="注入 OSC 133 标记，启用命令块/退出码/失败标记（支持 pwsh、bash、zsh；新会话生效）"
+                  >
+                    <Switch
+                      checked={s.shellIntegration}
+                      onChange={(v) => s.patch({ shellIntegration: v })}
+                    />
+                  </Row>
+                  <Row
+                    label="长命令完成通知"
+                    desc="窗口未聚焦时，超过阈值的命令结束后发送系统通知"
+                  >
+                    <Switch
+                      checked={s.notifyOnLongCommand}
+                      onChange={(v) => s.patch({ notifyOnLongCommand: v })}
+                    />
+                  </Row>
+                  <Row label="通知阈值（秒）" desc="命令运行超过该时长才通知">
+                    <input
+                      className="ctrl"
+                      type="number"
+                      min={3}
+                      max={600}
+                      style={{ width: 90 }}
+                      value={s.notifyThresholdSec}
+                      onChange={(e) => {
+                        const n = Math.min(600, Math.max(3, Number(e.target.value) || 15));
+                        s.patch({ notifyThresholdSec: n });
+                      }}
+                    />
+                  </Row>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {panel === "hosts" && (
+            <section className="panel active">
+              <div className="panel-header">
+                <h1>SSH 主机</h1>
+                <p>
+                  以系统 ssh 为内核的远程主机管理：主机即 Shell 配置，
+                  在新建标签 / 分屏菜单中一键连接。密钥路径仅存本机。
+                </p>
+              </div>
+              <HostsPanel />
             </section>
           )}
 
@@ -436,13 +507,43 @@ export function SettingsPage() {
             </section>
           )}
 
-          {panel === "extensions" && (
+          {panel === "approval" && (
             <section className="panel active">
               <div className="panel-header">
-                <h1>扩展</h1>
-                <p>本地 JSON 扩展：命令面板项与 Agent 提示片段。</p>
+                <h1>审批</h1>
+                <p>
+                  Agent 每次使用工具、执行命令、调用 MCP 前都会经过这里的策略：
+                  规则优先，其次预设档；「总是允许」写入的规则在此可见、可撤销。
+                </p>
               </div>
-              <ExtensionsPanel />
+              <ApprovalPanel />
+            </section>
+          )}
+
+          {panel === "mcp" && (
+            <section className="panel active">
+              <div className="panel-header">
+                <h1>MCP</h1>
+                <p>
+                  连接 Model Context Protocol server，把外部工具（文件系统、数据库、
+                  浏览器…）开放给 Agent。stdio 为本地进程，http 为远程端点；
+                  所有调用都经过「审批」策略。
+                </p>
+              </div>
+              <McpPanel />
+            </section>
+          )}
+
+          {panel === "skills" && (
+            <section className="panel active">
+              <div className="panel-header">
+                <h1>Skill</h1>
+                <p>
+                  Agent 的内置能力简报——教它何时/如何操作 Aether 的各项功能，
+                  随每次对话自动注入。当前为内置，随发布更新。
+                </p>
+              </div>
+              <SkillsPanel />
             </section>
           )}
 
@@ -470,8 +571,8 @@ export function SettingsPage() {
                       }
                     >
                       <option value="openai-compat">OpenAI 兼容 API（推荐）</option>
+                      <option value="anthropic">Anthropic 原生（/v1/messages）</option>
                       <option value="custom">自定义（仍按 OpenAI /v1 协议）</option>
-                      {/* anthropic 协议尚未接入请求体，暂不提供以免误导 */}
                     </select>
                   </Row>
                   <Row
@@ -577,6 +678,15 @@ export function SettingsPage() {
                     </div>
                   </Row>
                   <Row
+                    label="项目上下文 AETHER.md"
+                    desc="从焦点窗格 cwd 向上查找 AETHER.md 注入请求（8KB 上限，git 根目录截止）"
+                  >
+                    <Switch
+                      checked={s.projectContext}
+                      onChange={(v) => s.patch({ projectContext: v })}
+                    />
+                  </Row>
+                  <Row
                     label="危险命令保护"
                     desc="开启后：确认模式下危险命令只插入不执行；自动模式仍会执行但提示"
                   >
@@ -672,6 +782,21 @@ export function SettingsPage() {
                   <Row label="按 Shell 分桶">
                     <Switch checked={s.historyByShell} onChange={(v) => s.patch({ historyByShell: v })} />
                   </Row>
+                  <Row label="历史容量上限" desc="超出后丢弃最旧记录（500–20000）">
+                    <input
+                      className="ctrl"
+                      type="number"
+                      min={500}
+                      max={20000}
+                      step={500}
+                      value={s.historyLimit}
+                      onChange={(e) => {
+                        const n = Math.min(20000, Math.max(500, Number(e.target.value) || 5000));
+                        s.patch({ historyLimit: n });
+                      }}
+                      style={{ width: 96 }}
+                    />
+                  </Row>
                   <Row label="接受建议后">
                     <Segmented
                       value={s.suggestAccept}
@@ -691,10 +816,16 @@ export function SettingsPage() {
                         className="btn"
                         type="button"
                         onClick={() => {
-                          if (confirm("确定清除全部命令历史？")) {
-                            clearHistory();
-                            toastMsg("命令历史已清除");
-                          }
+                          void askConfirm("清除命令历史", {
+                            message: "确定清除全部命令历史？此操作不可撤销。",
+                            danger: true,
+                            okLabel: "清除",
+                          }).then((ok) => {
+                            if (ok) {
+                              clearHistory();
+                              toastMsg("命令历史已清除");
+                            }
+                          });
                         }}
                       >
                         清除历史…
@@ -703,6 +834,19 @@ export function SettingsPage() {
                   </div>
                 </div>
               </div>
+            </section>
+          )}
+
+          {panel === "snippets" && (
+            <section className="panel active">
+              <div className="panel-header">
+                <h1>命令片段</h1>
+                <p>
+                  可复用命令模板，参数用 {"{name}"} 占位。命令面板（Ctrl+Shift+P）
+                  中调用，触发时弹窗填参后插入当前窗格。
+                </p>
+              </div>
+              <SnippetsPanel />
             </section>
           )}
 
@@ -733,9 +877,12 @@ export function SettingsPage() {
                         ["切换窗格", "Ctrl+Alt+←/→", "焦点在分屏间循环"],
                         ["Agent 面板", "Ctrl+Shift+A", "显示/隐藏"],
                         ["清屏", "Ctrl+L", "清空焦点窗格（终端内亦可）"],
+                        ["焦点最大化", "Ctrl+Shift+M", "最大化/还原焦点窗格"],
                         ["中断 / 复制", "Ctrl+C", "终端：有选区复制，否则 SIGINT"],
                         ["强制复制", "Ctrl+Shift+C", "终端：复制选区"],
+                        ["复制（备用）", "Ctrl+Insert", "终端：复制选区"],
                         ["粘贴", "Ctrl+V", "终端：粘贴到 PTY"],
+                        ["粘贴（备用）", "Shift+Insert", "终端：粘贴到 PTY"],
                         ["打开设置", "Ctrl+,", "本页"],
                       ].map(([a, k, d]) => (
                         <tr key={a}>
@@ -772,7 +919,7 @@ export function SettingsPage() {
                     </div>
                     <div>
                       <div className="about-name">Aether</div>
-                      <div className="about-ver">v0.6.0 · Aether</div>
+                      <div className="about-ver">v{APP_VERSION} · Aether</div>
                     </div>
                   </div>
                   <dl className="about-meta">
@@ -809,15 +956,16 @@ export function SettingsPage() {
                         className="btn"
                         onClick={async () => {
                           const r = await checkForUpdate({
-                            current: "0.6.0",
+                            current: APP_VERSION,
                             feedUrl: s.updateFeedUrl,
                           });
                           if (r.status === "disabled") toastMsg("未配置更新源");
                           else if (r.status === "up-to-date") toastMsg(`已是最新 · ${r.current}`);
                           else if (r.status === "available") {
-                            const go = confirm(
-                              `发现新版本 ${r.remote.version}\n\n${r.remote.notes || ""}\n\n打开下载页？`,
-                            );
+                            const go = await askConfirm(`发现新版本 ${r.remote.version}`, {
+                              message: `${r.remote.notes || ""}\n\n打开下载页？`.trim(),
+                              okLabel: "打开下载页",
+                            });
                             if (go && r.remote.url) window.open(r.remote.url, "_blank");
                             else toastMsg(`可用版本 ${r.remote.version}`);
                           } else toastMsg(`检查失败：${r.message}`);
@@ -838,10 +986,16 @@ export function SettingsPage() {
                     className="btn ghost"
                     type="button"
                     onClick={() => {
-                      if (confirm("恢复全部默认设置？")) {
-                        s.reset();
-                        toastMsg("已恢复默认设置");
-                      }
+                      void askConfirm("恢复默认设置", {
+                        message: "全部设置将恢复为默认值（API Key 也会被清除）。",
+                        danger: true,
+                        okLabel: "恢复默认",
+                      }).then((ok) => {
+                        if (ok) {
+                          s.reset();
+                          toastMsg("已恢复默认设置");
+                        }
+                      });
                     }}
                   >
                     恢复默认设置
@@ -859,13 +1013,12 @@ export function SettingsPage() {
             className="btn"
             type="button"
             onClick={() => {
-              const data = localStorage.getItem("sw-settings-v1") || "{}";
-              const blob = new Blob([data], { type: "application/json" });
+              const blob = new Blob([exportSettingsJson()], { type: "application/json" });
               const a = document.createElement("a");
               a.href = URL.createObjectURL(blob);
               a.download = "shell-workbench-settings.json";
               a.click();
-              toastMsg("已导出设置（不含密钥字段请自查）");
+              toastMsg("已导出设置（已移除密钥字段）");
             }}
           >
             导出配置

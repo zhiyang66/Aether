@@ -78,3 +78,57 @@ describe("resolveTerminalShortcut", () => {
     ).toEqual({ action: "sigint" });
   });
 });
+
+describe("workbench chords never reach the PTY", () => {
+  const none = { hasSelection: false, selection: "" };
+
+  it("Ctrl+T / Ctrl+W / Ctrl+, → workbench", () => {
+    for (const key of ["t", "w", ","]) {
+      expect(resolveTerminalShortcut({ ...base, key }, none)).toEqual({
+        action: "workbench",
+      });
+    }
+  });
+
+  it("Ctrl+Shift+P/A/W/M → workbench", () => {
+    for (const key of ["p", "a", "w", "m"]) {
+      expect(
+        resolveTerminalShortcut({ ...base, key, shiftKey: true }, none),
+      ).toEqual({ action: "workbench" });
+    }
+  });
+
+  it("Alt+Shift+D / Alt+Shift+E (split) → workbench", () => {
+    for (const key of ["d", "e"]) {
+      expect(
+        resolveTerminalShortcut(
+          { ...base, ctrlKey: false, altKey: true, shiftKey: true, key },
+          none,
+        ),
+      ).toEqual({ action: "workbench" });
+    }
+  });
+
+  it("Ctrl+Alt+Arrow (pane focus) → workbench", () => {
+    for (const key of ["ArrowLeft", "ArrowRight"]) {
+      expect(
+        resolveTerminalShortcut({ ...base, altKey: true, key }, none),
+      ).toEqual({ action: "workbench" });
+    }
+  });
+
+  it("Ctrl+Shift+C stays copy (not workbench)", () => {
+    expect(
+      resolveTerminalShortcut({ ...base, shiftKey: true, key: "c" }, none),
+    ).toEqual({ action: "copy", text: "" });
+  });
+
+  it("plain Alt+letter still passes to the shell", () => {
+    expect(
+      resolveTerminalShortcut(
+        { ...base, ctrlKey: false, altKey: true, key: "d" },
+        none,
+      ),
+    ).toEqual({ action: "pass" });
+  });
+});

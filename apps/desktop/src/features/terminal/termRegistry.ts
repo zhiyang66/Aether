@@ -10,6 +10,10 @@ export type LiveTerm = {
   disposed: boolean;
   /** permanent cleanups (pty listeners) — only run on disposePaneSession */
   sessionCleanups: Array<() => void>;
+  /** buffer search (Ctrl+Shift+F) — set when the session is created */
+  search?: import("@xterm/addon-search").SearchAddon;
+  /** OSC 133 command-block tracker for this session */
+  blocks?: import("../../lib/commandBlocks").BlockTracker;
 };
 
 const registry = new Map<string, LiveTerm>();
