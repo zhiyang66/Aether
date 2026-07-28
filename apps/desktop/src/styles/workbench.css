@@ -1129,6 +1129,42 @@
       border-bottom-left-radius: 5px;
       box-shadow: 0 1px 0 color-mix(in oklch, var(--fg) 3%, transparent);
     }
+    /* Copy icon sits on the bubble's bottom-right corner (not in msg-actions). */
+    .msg-bubble-wrap {
+      position: relative;
+      max-width: 100%;
+    }
+    .msg-bubble-wrap .msg-bubble {
+      /* Room for the floating copy icon so text doesn't sit under it. */
+      padding-bottom: 28px;
+    }
+    .msg-copy-icon {
+      position: absolute;
+      right: 8px;
+      bottom: 6px;
+      width: 26px;
+      height: 26px;
+      padding: 0;
+      border: none;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      opacity: 0.55;
+      transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease;
+    }
+    .msg-bubble-wrap:hover .msg-copy-icon,
+    .msg-copy-icon:focus-visible {
+      opacity: 1;
+      color: var(--fg);
+      background: color-mix(in oklch, var(--fg) 8%, transparent);
+    }
+    .msg-copy-icon:hover {
+      background: color-mix(in oklch, var(--fg) 12%, transparent);
+    }
     .msg-bubble .md-p { margin: 0 0 0.65em; color: color-mix(in oklch, var(--fg) 96%, var(--muted)); }
     .msg-bubble .md-p:last-child { margin-bottom: 0; }
     .msg-bubble .md-h {
@@ -1190,20 +1226,6 @@
     .msg-stream-live.md > :last-child {
       margin-bottom: 0;
     }
-    .msg-bubble-stream .msg-stream-live.md::after {
-      content: "▋";
-      display: inline;
-      margin-left: 2px;
-      color: var(--accent, var(--fg));
-      animation: aether-caret 1s steps(1) infinite;
-      font-weight: 400;
-    }
-    @keyframes aether-caret {
-      50% {
-        opacity: 0;
-      }
-    }
-
     /* Thinking: separate collapsible block — not mixed into answer bubble */
     .msg-thinking {
       width: 100%;

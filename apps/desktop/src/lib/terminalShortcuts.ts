@@ -49,11 +49,25 @@ export function isWorkbenchChord(e: TermShortcutEvent): boolean {
  *
  * PSReadLine has a native Ctrl+Enter binding through CSI-u. Readline/ZLE
  * shells accept quoted Ctrl+J, which inserts a newline in the edit buffer.
+ * Agent CLIs (Codex / Claude Code) are handled separately: Ctrl+Enter is
+ * remapped to Alt+Enter bytes — see agentTuiCtrlEnterSequence.
  * cmd.exe has no editable multiline command buffer.
  */
 export function ctrlEnterSequenceForShell(shellKey: string): string | null {
-  if (shellKey === "ps" || shellKey.startsWith("ps")) return "\x1b[13;5u";
-  if (shellKey === "cmd") return null;
+  const key = shellKey.toLowerCase();
+  if (
+    key === "ps" ||
+    key.startsWith("ps") ||
+    key === "codex" ||
+    key.startsWith("codex:") ||
+    key.includes("codex") ||
+    key === "claude" ||
+    key.startsWith("claude:") ||
+    key.includes("claude")
+  ) {
+    return "\x1b[13;5u";
+  }
+  if (key === "cmd") return null;
   return "\x16\x0a";
 }
 

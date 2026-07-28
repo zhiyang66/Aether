@@ -1,7 +1,7 @@
 {
-  "version": "1.0.6",
-  "notes": "终端输入与图片粘贴更稳定；Agent 支持图片记录、后台操作和追加需求；更新可显示下载进度并可靠启动安装程序。",
-  "downloadUrl": "https://github.com/zhiyang66/Aether/releases/download/v1.0.6/Aether_1.0.6_x64-setup.exe",
-  "downloadName": "Aether_1.0.6_x64-setup.exe",
-  "url": "https://github.com/zhiyang66/Aether/releases/tag/v1.0.6"
+  "version": "1.0.7",
+  "notes": "Ctrl+Enter 在 Codex/Claude 输入框插入换行；Agent 回复气泡支持一键复制；Codex Working 重绘时抑制多余硬件光标闪烁。",
+  "downloadUrl": "https://github.com/zhiyang66/Aether/releases/download/v1.0.7/Aether_1.0.7_x64-setup.exe",
+  "downloadName": "Aether_1.0.7_x64-setup.exe",
+  "url": "https://github.com/zhiyang66/Aether/releases/tag/v1.0.7"
 }

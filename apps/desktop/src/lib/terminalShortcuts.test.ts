@@ -103,6 +103,10 @@ describe("Ctrl+Enter terminal encoding", () => {
   it("uses native PowerShell CSI-u and quoted newline for readline shells", () => {
     expect(ctrlEnterSequenceForShell("ps")).toBe("\x1b[13;5u");
     expect(ctrlEnterSequenceForShell("ps-pwsh")).toBe("\x1b[13;5u");
+    expect(ctrlEnterSequenceForShell("codex")).toBe("\x1b[13;5u");
+    expect(ctrlEnterSequenceForShell("codex:default")).toBe("\x1b[13;5u");
+    expect(ctrlEnterSequenceForShell("claude")).toBe("\x1b[13;5u");
+    expect(ctrlEnterSequenceForShell("claude:opus")).toBe("\x1b[13;5u");
     expect(ctrlEnterSequenceForShell("cmd")).toBeNull();
     for (const shellKey of ["bash", "zsh", "wsl", "wsl:Ubuntu", "ssh:ubuntu-test"]) {
       expect(ctrlEnterSequenceForShell(shellKey)).toBe("\x16\x0a");

@@ -1302,18 +1302,55 @@ export function AiPanel() {
               <ToolTrace steps={m.toolTrace} />
             )}
             {(m.html || m.content) && (
-              <div
-                className="msg-bubble"
-                {...(m.role === "assistant" && m.html
-                  ? { dangerouslySetInnerHTML: { __html: m.html } }
-                  : m.role === "user"
-                    ? { children: m.content }
-                    : {
-                        dangerouslySetInnerHTML: {
-                          __html: markdownToHtml(m.content || ""),
-                        },
-                      })}
-              />
+              m.role === "assistant" && !!m.content?.trim() ? (
+                <div className="msg-bubble-wrap">
+                  <div
+                    className="msg-bubble"
+                    {...(m.html
+                      ? { dangerouslySetInnerHTML: { __html: m.html } }
+                      : {
+                          dangerouslySetInnerHTML: {
+                            __html: markdownToHtml(m.content || ""),
+                          },
+                        })}
+                  />
+                  <button
+                    type="button"
+                    className="msg-copy-icon"
+                    title="复制回复"
+                    aria-label="复制回复"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(m.content).then(
+                        () => toastMsg("已复制回复"),
+                        () => toastMsg("复制失败"),
+                      );
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                      <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="1.25" />
+                      <path
+                        d="M10.5 5.5V3.75A1.25 1.25 0 0 0 9.25 2.5H3.75A1.25 1.25 0 0 0 2.5 3.75v5.5A1.25 1.25 0 0 0 3.75 10.5H5.5"
+                        stroke="currentColor"
+                        strokeWidth="1.25"
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  </button>
+                </div>
+              ) : (
+                <div
+                  className="msg-bubble"
+                  {...(m.role === "assistant" && m.html
+                    ? { dangerouslySetInnerHTML: { __html: m.html } }
+                    : m.role === "user"
+                      ? { children: m.content }
+                      : {
+                          dangerouslySetInnerHTML: {
+                            __html: markdownToHtml(m.content || ""),
+                          },
+                        })}
+                />
+              )
             )}
             {/* Show actions on every unconsumed assistant message (not only the latest) */}
             {m.role === "assistant" &&

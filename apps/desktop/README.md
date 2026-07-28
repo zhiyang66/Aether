@@ -2,7 +2,7 @@
 
 以 **Agent 为核心**的跨平台终端工作台。本机 Shell 作为执行内核，界面与终端呈现完全自研：多标签、树状分屏、真实 PTY、OSC 133 命令块、对话式 Agent（工具循环）、MCP 工具生态、SSH 主机管理、会话录制回放。
 
-**当前版本：`1.0.5`**
+**当前版本：`1.0.7`**
 
 | 技术栈 | 用途 |
 |--------|------|
@@ -181,7 +181,7 @@ npm run dev
 
 ## 版本与许可
 
-- 版本号以 `package.json` / `src-tauri/tauri.conf.json` 为准（当前 **1.0.5**，应用内「关于」页同步显示）
+- 版本号以 `package.json` / `src-tauri/tauri.conf.json` 为准（当前 **1.0.7**，应用内「关于」页同步显示）
 - 跨平台桌面应用（Tauri）；本仓库 Release 附带当前环境可产出的安装包，其它平台可从源码构建
 - 更新检查固定对接 GitHub Releases（`设置 → 关于 → 检查更新`）
 - 发布标签：
@@ -191,7 +191,9 @@ npm run dev
   - [`v1.0.2`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.2) — 设置搜索 / WebGL / 多窗格与 Actions
   - [`v1.0.3`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.3) — 去掉任务系统 · GitHub 检查更新
   - [`v1.0.4`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.4) — 启动闪屏 / WT 抢附 / 多 PTY 卡死修复
-  - [`v1.0.5`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.5) — 当前：清晰操作轨迹、终端字重与应用内更新
+  - [`v1.0.5`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.5) — 清晰操作轨迹、终端字重与应用内更新
+  - [`v1.0.6`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.6) — 图片粘贴、后台 Agent 操作、追加需求
+  - [`v1.0.7`](https://github.com/zhiyang66/Aether/releases/tag/v1.0.7) — 当前：Ctrl+Enter 换行、回复复制、Codex 光标抑制
 - 仓库许可：见 `src-tauri/Cargo.toml`（MIT）
 
 ---

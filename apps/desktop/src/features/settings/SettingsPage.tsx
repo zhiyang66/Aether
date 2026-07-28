@@ -1211,6 +1211,8 @@ export function SettingsPage() {
                         ["复制（备用）", "Ctrl+Insert", "终端：复制选区"],
                         ["粘贴", "Ctrl+V", "终端：粘贴到 PTY"],
                         ["粘贴（备用）", "Shift+Insert", "终端：粘贴到 PTY"],
+                        ["插入换行", "Ctrl+Enter", "终端：不提交，插入换行（Codex/Claude 等同 Alt+Enter）"],
+                        ["行首 / 行尾", "Home / End", "终端：跳到当前行首或行尾"],
                         ["打开设置", "Ctrl+,", "本页"],
                       ].map(([a, k, d]) => (
                         <tr key={a}>

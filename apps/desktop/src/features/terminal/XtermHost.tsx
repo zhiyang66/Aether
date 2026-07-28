@@ -32,6 +32,12 @@ import {
 import { ctrlEnterSequenceForShell, resolveTerminalShortcut } from "../../lib/terminalShortcuts";
 import { prepareTerminalPaste } from "../../lib/terminalPaste";
 import {
+  agentTuiCtrlEnterSequence,
+  agentTuiFromShellKey,
+  detectAgentTuiFromOutput,
+  type AgentTuiKind,
+} from "../../lib/agentTui";
+import {
   clipboardHasImage,
   quoteShellPath,
   readClipboardImage,
@@ -219,6 +225,264 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
       /* ignore */
     }
 
+    // Detect Codex / Claude full-screen composers so Ctrl+Enter can emit the
+    // newline sequence those TUIs already understand (ESC CR / Alt+Enter).
+    //
+    // Codex write-gate (cursor flicker during Working):
+    // Codex repaints status ~every 32ms with MoveTo+Print while the hardware
+    // caret is still "shown", then frame-end moves it to the composer. A short
+    // post-write release (e.g. 12ms) unfreezes BETWEEN frames → visible flash.
+    // Hold the freeze across the whole Working burst; only restore after the
+    // stream has been quiet longer than one animation frame.
+    let agentTui: AgentTuiKind | null = agentTuiFromShellKey(shellKey);
+    const coreService = (
+      term as unknown as { _core?: { coreService?: { isCursorHidden: boolean } } }
+    )._core?.coreService;
+    /** Last DECTCEM show/hide from the app (?25h / ?25l). true = hidden. */
+    let codexDecHidden = false;
+    /** In-flight term.write batches for Codex. */
+    let codexWritePending = 0;
+    let codexReleaseTimer: number | null = null;
+    /**
+     * While Working (or any high-frequency Codex redraw) is active, keep the
+     * hardware caret frozen even between individual write callbacks.
+     * Extended on each gated write; cleared after quiet period.
+     */
+    let codexAnimHold = false;
+    /** Working is ~32ms/frame; stay frozen until quiet past ~2 frames. */
+    const CODEX_ANIM_QUIET_MS = 90;
+    /** Idle typing redraws are sparse — release sooner when not in anim hold. */
+    const CODEX_IDLE_RELEASE_MS = 24;
+    /**
+     * Last stable helper-textarea position (composer). xterm repositions the
+     * IME target on every cursor move — during Working that follows MoveTo
+     * paint traffic and steals the IME window. Pin to this while gated or
+     * while a CJK composition is in progress.
+     */
+    let imeAnchor: { left: string; top: string; width: string; height: string } | null = null;
+    /** True between compositionstart and compositionend on the helper textarea. */
+    let imeComposing = false;
+    let imeRaf = 0;
+    let imeStyleObserver: MutationObserver | null = null;
+    let imeApplying = false;
+
+    const setCoreCursorHidden = (hidden: boolean) => {
+      if (!coreService) return;
+      try {
+        coreService.isCursorHidden = hidden;
+      } catch {
+        /* ignore */
+      }
+    };
+
+    const codexGateActive = () =>
+      agentTui === "codex" && (codexWritePending > 0 || codexAnimHold);
+
+    /** Pin IME whenever Codex is painting OR the user is mid-composition. */
+    const imePinActive = () =>
+      agentTui === "codex" && (codexGateActive() || imeComposing);
+
+    const readTextareaAnchor = () => {
+      const ta = term.textarea;
+      if (!ta) return null;
+      const { left, top, width, height } = ta.style;
+      // xterm parks the textarea at left:-9999em when idle; ignore that.
+      if (!left || !top || left.startsWith("-")) return null;
+      return { left, top, width: width || "1px", height: height || "1px" };
+    };
+
+    const applyImeAnchor = () => {
+      if (!imeAnchor) return;
+      imeApplying = true;
+      try {
+        const ta = term.textarea;
+        if (ta) {
+          ta.style.left = imeAnchor.left;
+          ta.style.top = imeAnchor.top;
+          ta.style.width = imeAnchor.width;
+          ta.style.height = imeAnchor.height;
+          ta.style.lineHeight = imeAnchor.height;
+        }
+        const comp = term.element?.querySelector(".composition-view") as HTMLElement | null;
+        if (comp) {
+          comp.style.left = imeAnchor.left;
+          comp.style.top = imeAnchor.top;
+          if (imeComposing) {
+            comp.style.height = imeAnchor.height;
+            comp.style.lineHeight = imeAnchor.height;
+          }
+        }
+      } finally {
+        // Defer clearing so MutationObserver callbacks from our own writes skip.
+        queueMicrotask(() => {
+          imeApplying = false;
+        });
+      }
+    };
+
+    /** Remember composer IME spot only when not mid-Working / mid-pin. */
+    const captureImeAnchorIfStable = () => {
+      if (agentTui !== "codex" || imePinActive()) return;
+      const next = readTextareaAnchor();
+      if (next) imeAnchor = next;
+    };
+
+    const rePinImeSoon = () => {
+      if (!imePinActive() || !imeAnchor) return;
+      applyImeAnchor();
+      if (imeRaf) cancelAnimationFrame(imeRaf);
+      imeRaf = requestAnimationFrame(() => {
+        imeRaf = 0;
+        if (imePinActive()) applyImeAnchor();
+        // CompositionHelper.updateCompositionElements uses setTimeout(0);
+        // beat it with another pin on the next macrotask.
+        window.setTimeout(() => {
+          if (imePinActive()) applyImeAnchor();
+        }, 0);
+      });
+    };
+
+    const ensureImeStyleObserver = () => {
+      if (imeStyleObserver || typeof MutationObserver === "undefined") return;
+      const ta = term.textarea;
+      const comp = term.element?.querySelector(".composition-view") as HTMLElement | null;
+      if (!ta && !comp) return;
+      imeStyleObserver = new MutationObserver(() => {
+        if (imeApplying || !imePinActive()) return;
+        applyImeAnchor();
+      });
+      const opts: MutationObserverInit = { attributes: true, attributeFilter: ["style", "class"] };
+      if (ta) imeStyleObserver.observe(ta, opts);
+      if (comp) imeStyleObserver.observe(comp, opts);
+    };
+
+    const scheduleCodexCursorRelease = (delayMs: number) => {
+      if (codexReleaseTimer != null) window.clearTimeout(codexReleaseTimer);
+      codexReleaseTimer = window.setTimeout(() => {
+        codexReleaseTimer = null;
+        if (codexWritePending > 0 || agentTui !== "codex") return;
+        // Keep freeze while the user is still composing — Working may resume.
+        if (imeComposing) {
+          scheduleCodexCursorRelease(CODEX_ANIM_QUIET_MS);
+          return;
+        }
+        codexAnimHold = false;
+        setCoreCursorHidden(codexDecHidden);
+        try {
+          const y = term.buffer.active.cursorY;
+          term.refresh(y, y);
+        } catch {
+          /* ignore */
+        }
+        window.setTimeout(() => {
+          captureImeAnchorIfStable();
+        }, 0);
+      }, delayMs);
+    };
+
+    const beginCodexWriteGate = (fromWorkingAnim: boolean) => {
+      if (agentTui !== "codex") return;
+      if (codexReleaseTimer != null) {
+        window.clearTimeout(codexReleaseTimer);
+        codexReleaseTimer = null;
+      }
+      // Snapshot composer IME position before the first paint of a burst.
+      if (!imePinActive()) captureImeAnchorIfStable();
+      if (fromWorkingAnim) codexAnimHold = true;
+      // High-frequency writes without the Working string still mean animation
+      // (diff-only frames). Keep hold if we already had one or are composing.
+      if (imeComposing) codexAnimHold = true;
+      codexWritePending += 1;
+      setCoreCursorHidden(true);
+      ensureImeStyleObserver();
+      rePinImeSoon();
+    };
+
+    const endCodexWriteGate = () => {
+      if (agentTui !== "codex") return;
+      codexWritePending = Math.max(0, codexWritePending - 1);
+      if (codexWritePending > 0) return;
+      // Working burst / composition: wait past frame interval.
+      // Quiet typing: shorter release so the composer caret comes back.
+      const hold = codexAnimHold || imeComposing;
+      scheduleCodexCursorRelease(hold ? CODEX_ANIM_QUIET_MS : CODEX_IDLE_RELEASE_MS);
+    };
+
+    // xterm repositions the helper textarea on every cursor move / render
+    // (CoreBrowserTerminal._syncTextArea) and again from CompositionHelper
+    // via setTimeout(0). Re-pin after each, plus MutationObserver for style.
+    const imePinCursorDisp = term.onCursorMove(() => {
+      if (imePinActive()) rePinImeSoon();
+      else captureImeAnchorIfStable();
+    });
+    const imePinRenderDisp = term.onRender(() => {
+      if (imePinActive()) rePinImeSoon();
+    });
+
+    // Capture a stable anchor at the moment composition begins, then pin for
+    // the entire composition — even if Working frames lack the "Working ("
+    // substring (diff-only cell updates).
+    const onCompositionStart = () => {
+      if (agentTui !== "codex") return;
+      // Prefer existing stable anchor; if none, take current (composer) spot.
+      if (!imeAnchor) {
+        const next = readTextareaAnchor();
+        if (next) imeAnchor = next;
+      }
+      imeComposing = true;
+      codexAnimHold = true; // treat composition like an anim hold for freeze
+      setCoreCursorHidden(true);
+      ensureImeStyleObserver();
+      rePinImeSoon();
+    };
+    const onCompositionUpdate = () => {
+      if (agentTui !== "codex") return;
+      rePinImeSoon();
+    };
+    const onCompositionEnd = () => {
+      if (agentTui !== "codex") return;
+      imeComposing = false;
+      rePinImeSoon();
+      // Don't snap caret free mid-Working; let quiet timer decide.
+      if (codexWritePending === 0) {
+        scheduleCodexCursorRelease(CODEX_ANIM_QUIET_MS);
+      }
+    };
+    const taForIme = term.textarea;
+    if (taForIme) {
+      taForIme.addEventListener("compositionstart", onCompositionStart, true);
+      taForIme.addEventListener("compositionupdate", onCompositionUpdate, true);
+      taForIme.addEventListener("compositionend", onCompositionEnd, true);
+    }
+    // Install observer once DOM helpers exist.
+    ensureImeStyleObserver();
+
+    const noteAgentTui = (kind: AgentTuiKind | null) => {
+      if (kind) agentTui = kind;
+    };
+
+    // Track DECTCEM. While the gate is active, swallow ?25h so xterm cannot
+    // paint the caret mid-diff or in the inter-frame gap of Working.
+    const csiShowDisp = term.parser.registerCsiHandler({ prefix: "?", final: "h" }, (params) => {
+      if (agentTui !== "codex") return false;
+      const flat = params.flatMap((p) => (Array.isArray(p) ? p : [p]));
+      if (!flat.includes(25)) return false;
+      codexDecHidden = false;
+      if (codexGateActive()) {
+        setCoreCursorHidden(true);
+        return true;
+      }
+      return false;
+    });
+    const csiHideDisp = term.parser.registerCsiHandler({ prefix: "?", final: "l" }, (params) => {
+      if (agentTui !== "codex") return false;
+      const flat = params.flatMap((p) => (Array.isArray(p) ? p : [p]));
+      if (!flat.includes(25)) return false;
+      codexDecHidden = true;
+      setCoreCursorHidden(true);
+      return false;
+    });
+
     const live: LiveTerm = {
       term,
       fit,
@@ -240,6 +504,19 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
     setLiveTerm(paneId, live);
     publishRendererBadge(paneId);
     live.sessionCleanups.push(() => {
+      csiShowDisp.dispose();
+      csiHideDisp.dispose();
+      imePinCursorDisp.dispose();
+      imePinRenderDisp.dispose();
+      if (taForIme) {
+        taForIme.removeEventListener("compositionstart", onCompositionStart, true);
+        taForIme.removeEventListener("compositionupdate", onCompositionUpdate, true);
+        taForIme.removeEventListener("compositionend", onCompositionEnd, true);
+      }
+      imeStyleObserver?.disconnect();
+      imeStyleObserver = null;
+      if (imeRaf) cancelAnimationFrame(imeRaf);
+      if (codexReleaseTimer != null) window.clearTimeout(codexReleaseTimer);
       try {
         live.webglDispose?.();
       } catch {
@@ -359,6 +636,32 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
     // Terminal chords: Ctrl+C (copy | SIGINT), Ctrl+V paste, Ctrl+L clear
     // return false → we handled it (block xterm default); true → pass to xterm/PTY
     term.attachCustomKeyEventHandler((ev) => {
+      // Block every event in this physical Ctrl+Enter sequence. Handling only
+      // keydown lets a later keypress leak through as a plain Enter, which
+      // immediately submits the line in full-screen CLIs such as Codex/Claude.
+      // User-facing chord is Ctrl+Enter; for agent TUIs we emit the same
+      // bytes as native Alt+Enter (ESC CR), which those composers already
+      // treat as "insert newline".
+      const isCtrlEnter =
+        ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey && ev.key === "Enter";
+      if (isCtrlEnter) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (ev.type === "keydown") {
+          const ctrlEnterSequence = agentTuiCtrlEnterSequence({
+            kind: agentTui,
+            alternateScreen: term.buffer.active === term.buffer.alternate,
+            bracketedPasteMode: !!term.modes.bracketedPasteMode,
+            shellKey,
+            fallback: ctrlEnterSequenceForShell,
+          });
+          if (ctrlEnterSequence && live.ptyId && !live.disposed) {
+            void ptyWrite(live.ptyId, ctrlEnterSequence);
+          }
+        }
+        return false;
+      }
+
       // Terminal-local features (search, block jumps) — before generic chords
       if (ev.type === "keydown") {
         // Some Chromium/IME combinations do not forward Home/End reliably to
@@ -377,16 +680,6 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
           return false;
         }
         const mod = ev.ctrlKey || ev.metaKey;
-        // xterm otherwise treats Ctrl+Enter as a plain Enter. Encode a
-        // non-accepting newline for the active shell's line editor.
-        const ctrlEnterSequence = ctrlEnterSequenceForShell(shellKey);
-        if (ctrlEnterSequence && ev.ctrlKey && !ev.metaKey && !ev.altKey && ev.key === "Enter") {
-          ev.preventDefault();
-          if (live.ptyId && !live.disposed) {
-            void ptyWrite(live.ptyId, ctrlEnterSequence);
-          }
-          return false;
-        }
         if (mod && ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === "f") {
           ev.preventDefault();
           setSearchOpen(true);
@@ -523,16 +816,27 @@ export function XtermHost({ paneId, shellKey, profileId, cwd, active, onPtyId }:
             return;
           }
           const bytes = ev.data instanceof Uint8Array ? ev.data : new Uint8Array(ev.data);
-          term.write(bytes);
+          // Decode first so Codex detection / Working markers arm the gate
+          // before this same chunk is painted.
+          let text = "";
+          let workingAnim = false;
           try {
-            const text = decoder.decode(bytes, { stream: true });
+            text = decoder.decode(bytes, { stream: true });
             cwdProbe = (cwdProbe + text).slice(-4000);
             const cwdHit = detectCwdFromOutput(cwdProbe);
             if (cwdHit) setPaneCwd(paneId, cwdHit);
+            noteAgentTui(detectAgentTuiFromOutput(text));
+            // Codex status line: "Working (1.2s)" — ~32ms animation frames.
+            workingAnim = /\bWorking\s*\(\d/i.test(text);
             appendPaneOutput(paneId, stripAnsi(text));
           } catch {
             /* ignore */
           }
+          // Freeze hardware caret before MoveTo/Print; hold across Working.
+          beginCodexWriteGate(workingAnim || codexAnimHold);
+          term.write(bytes, () => {
+            endCodexWriteGate();
+          });
         };
 
         const unData = await onPtyData(ingest);

@@ -1,7 +1,7 @@
 # Aether · 发布说明
 
-**当前冻结版本：1.0.6**
-升号规则：见 [`ROADMAP.md`](ROADMAP.md)。默认不升到 1.0，除非你明确确认。
+**当前冻结版本：1.0.7**
+升号规则：见 [`ROADMAP.md`](ROADMAP.md)。
 
 ## 本地门禁
 
@@ -49,10 +49,10 @@ GitHub Release 示例：`https://github.com/zhiyang66/Aether/releases`
 
 ```json
 {
-  "version": "1.0.6",
+  "version": "1.0.7",
   "notes": "更新说明",
-  "downloadUrl": "https://github.com/zhiyang66/Aether/releases/download/v1.0.6/Aether_1.0.6_x64-setup.exe",
-  "downloadName": "Aether_1.0.6_x64-setup.exe"
+  "downloadUrl": "https://github.com/zhiyang66/Aether/releases/download/v1.0.7/Aether_1.0.7_x64-setup.exe",
+  "downloadName": "Aether_1.0.7_x64-setup.exe"
 }
 ```
 
