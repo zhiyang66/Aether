@@ -4,7 +4,6 @@ import { countLeaves, updateLeaf } from "../../lib/layout";
 import { useWorkbenchStore } from "../../store/workbenchStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import {
-  listHistoryForShell,
   querySuggestions,
   recordCommand,
 } from "../../lib/commandHistory";
@@ -42,17 +41,12 @@ function LeafView({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [suggestIdx, setSuggestIdx] = useState(0);
   const [showSuggest, setShowSuggest] = useState(false);
-  const [histOpen, setHistOpen] = useState(false);
   const [blocksOpen, setBlocksOpen] = useState(false);
   const [blocksVersion, setBlocksVersion] = useState(0);
   const [ptyId, setPtyId] = useState<string | null>(null);
   // Prefer real PTY whenever Tauri is present. useMock may be stuck true if the
   // store module evaluated before __TAURI_INTERNALS__ was injected.
   const realTerm = isTauri() ? true : !useMock;
-  const shellHistory = useMemo(
-    () => listHistoryForShell(pane.shellKey, 30),
-    [pane.shellKey, histOpen, pane.cmdHistory.length],
-  );
 
   const suggestions = useMemo(() => {
     if (!settings.suggestEnabled || !pane.draft.trim() || realTerm) return [];
@@ -305,7 +299,6 @@ function LeafView({
                 e.preventDefault();
                 e.stopPropagation();
                 setBlocksOpen((v) => !v);
-                setHistOpen(false);
               }}
             >
               <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
@@ -314,30 +307,6 @@ function LeafView({
               </svg>
             </button>
           )}
-          <button
-            className="pane-icon-btn"
-            type="button"
-            title="历史命令（同 Shell 共享）"
-            aria-label="历史命令"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setHistOpen((v) => !v);
-              setBlocksOpen(false);
-              setShowSuggest(false);
-            }}
-          >
-            <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
-              <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" strokeWidth="1.6" />
-              <polyline
-                points="12 8 12 12 15 14"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
           <button
             className="pane-icon-btn"
             type="button"
@@ -481,44 +450,7 @@ function LeafView({
           ))}
         </div>
       )}
-      {histOpen && (
-        <div
-          className="pane-hist-pop"
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <div className="pane-hist-title">
-            历史命令
-            <span style={{ color: "var(--muted)", fontWeight: 400 }}>
-              {" "}
-              · 同 Shell 共享
-            </span>
-          </div>
-          {shellHistory.length === 0 && (
-            <div className="pane-hist-empty">暂无历史</div>
-          )}
-          {shellHistory.map((h, i) => (
-            <button
-              key={h.cmd + i}
-              type="button"
-              className="pane-hist-item"
-              onClick={() => {
-                const live = getLiveTerm(pane.id);
-                if (live?.ptyId && realTerm) {
-                  void import("../../ipc/pty").then(({ ptyWrite }) => {
-                    void ptyWrite(live.ptyId!, h.cmd);
-                  });
-                } else {
-                  setDraft(pane.id, h.cmd);
-                }
-                setHistOpen(false);
-              }}
-            >
-              <span className="pane-hist-cmd">{h.cmd}</span>
-              <span className="pane-hist-meta">{h.count}×</span>
-            </button>
-          ))}
-        </div>
-      )}
+
       <div
         className="pane-body"
         ref={bodyRef}

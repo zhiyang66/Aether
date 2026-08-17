@@ -187,15 +187,20 @@ function maxSerialInLayout(layout: LayoutNode): number {
   return Math.max(...leaves.map((l) => l.serial));
 }
 
-/** Clear runtime PTY handles before restoring saved session. */
-function stripRuntime(node: LayoutNode): LayoutNode {
+/** Clear runtime PTY handles (and optionally refresh node IDs) before restoring saved session. */
+function stripRuntime(node: LayoutNode, refreshIds = false): LayoutNode {
   if (node.type === "leaf") {
-    return { ...node, ptyId: undefined };
+    return {
+      ...node,
+      id: refreshIds ? nextId("pane") : node.id,
+      ptyId: undefined,
+    };
   }
   return {
     ...node,
-    a: stripRuntime(node.a),
-    b: stripRuntime(node.b),
+    id: refreshIds ? nextId("split") : node.id,
+    a: stripRuntime(node.a, refreshIds),
+    b: stripRuntime(node.b, refreshIds),
   };
 }
 
@@ -317,8 +322,8 @@ export const useWorkbenchStore = create<WorkbenchState>((set, get) => {
         // Prefer keeping the previously active tab in the restored set
         let tabs = saved.tabs.map((t) => ({
           ...t,
-          // ensure no stale pty ids
-          layout: stripRuntime(t.layout),
+          // ensure no stale pty ids and fresh unique node ids
+          layout: stripRuntime(t.layout, true),
         }));
         let activeTabId = saved.activeTabId;
         if (!tabs.find((t) => t.id === activeTabId)) {
